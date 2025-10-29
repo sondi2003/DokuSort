@@ -10,18 +10,17 @@ import SwiftUI
 @main
 struct DokuSortApp: App {
     @StateObject private var store = DocumentStore()
-    @StateObject private var catalog = CatalogStore()
     @StateObject private var settings = SettingsStore()
+    @StateObject private var catalog = CatalogStore()
+    @StateObject private var analysis = AnalysisManager()   // bleibt
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MainDashboardView()              // 👈 jetzt Dashboard statt ContentView
                 .environmentObject(store)
-                .environmentObject(catalog)
                 .environmentObject(settings)
-                .onAppear {
-                    store.reloadFromDisk()
-                }
+                .environmentObject(catalog)
+                .environmentObject(analysis)
         }
     }
 }

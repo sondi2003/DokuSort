@@ -11,6 +11,7 @@ struct MetadataEditorView: View {
     let item: DocumentItem
     var onPrev: (() -> Void)? = nil
     var onNext: (() -> Void)? = nil
+    var embedPreview: Bool = true   // wenn false: keine eigene PDF-Vorschau im Editor
 
     @EnvironmentObject private var catalog: CatalogStore
     @EnvironmentObject private var settings: SettingsStore
@@ -36,12 +37,14 @@ struct MetadataEditorView: View {
     var body: some View {
         ZStack(alignment: .top) {
             HStack(spacing: 0) {
-                PDFKitNSView(url: item.fileURL)
-                    .frame(minWidth: 380)
-
-                Divider()
+                if embedPreview {
+                    PDFKitNSView(url: item.fileURL)
+                        .frame(minWidth: 380)
+                    Divider()
+                }
 
                 VStack(alignment: .leading, spacing: 12) {
+                    // ... (Rest des rechten Panels unverändert)
                     // Batch Bar
                     HStack(spacing: 12) {
                         Button { onPrev?() } label: { Label("Vorheriges", systemImage: "chevron.left") }
@@ -193,6 +196,7 @@ struct MetadataEditorView: View {
         // << Automatische Analyse: bei jedem neuen Item starten
         .task(id: item.fileURL) {
             await runAutoSuggestionAndApply()
+            NotificationCenter.default.post(name: .analysisDidFinish, object: item.fileURL)
         }
         .navigationTitle(item.fileName)
         .alert(item: Binding(get: { alertMsg.map { MsgWrapper(message: $0) } }, set: { _ in alertMsg = nil })) { w in
@@ -233,6 +237,7 @@ struct MetadataEditorView: View {
                     applySuggestionOverwriting(s)
                     lastSuggestion = s
                     statusText = "KI-Ergebnis übernommen"
+                    NotificationCenter.default.post(name: .analysisDidFinish, object: item.fileURL)
                     return
                 }
             }
