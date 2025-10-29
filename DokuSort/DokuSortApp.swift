@@ -16,9 +16,9 @@ struct DokuSortApp: App {
     @StateObject private var catalog = CatalogStore()
     @StateObject private var analysis = AnalysisManager()
     @StateObject private var watcher = SourceWatcher()
+    @StateObject private var bgAnalyzer = BackgroundAnalyzer()   // << neu
 
     @State private var statusBarController: StatusBarController?
-    @State private var bgAnalyzer: BackgroundAnalyzer?
 
     var body: some Scene {
         WindowGroup {
@@ -28,20 +28,22 @@ struct DokuSortApp: App {
                 .environmentObject(catalog)
                 .environmentObject(analysis)
                 .onAppear {
-                    // Persistenz ist über Singleton geladen; AnalysisManager hat gebootstrapped.
                     // Watcher starten + initial scannen
                     watcher.startWatching(url: settings.sourceBaseURL)
                     if settings.sourceBaseURL != nil && store.items.isEmpty {
                         store.scanSourceFolder(settings.sourceBaseURL)
                     }
-                    // Statusbar-Icon
+                    // Hintergrund-Analyzer starten (arbeitet komplette Liste ab)
+                    bgAnalyzer.start(store: store, settings: settings, analysis: analysis)
+
+                    // Statusbar-Icon initialisieren
                     if statusBarController == nil {
-                        statusBarController = StatusBarController(store: store,
-                                                                  settings: settings,
-                                                                  analysis: analysis,
-                                                                  watcher: watcher)
+                        statusBarController = StatusBarController(
+                            store: store, settings: settings, analysis: analysis, watcher: watcher
+                        )
                     }
-                    // Hauptfenster für WindowManager registrieren
+
+                    // Hauptfenster fuer "Hauptfenster oeffnen" registrieren
                     if let window = NSApp.keyWindow ?? NSApp.windows.first {
                         WindowManager.shared.registerMainWindow(window)
                     }
@@ -50,6 +52,8 @@ struct DokuSortApp: App {
                     watcher.startWatching(url: newValue)
                     store.scanSourceFolder(newValue)
                     analysis.reset()
+                    // Nach Quellenwechsel die neue Liste abarbeiten
+                    bgAnalyzer.start(store: store, settings: settings, analysis: analysis)
                 }
         }
     }

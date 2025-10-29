@@ -9,59 +9,185 @@ import Foundation
 import PDFKit
 import Combine
 
-/// Führt Analysen im Hintergrund durch (Ollama → OCR-Fallback), ohne UI.
-/// Ergebnisse werden per Notification gepostet und dadurch automatisch persistiert.
-final class BackgroundAnalyzer {
+/// Arbeitet beim App-Start die komplette Quelle ab und verarbeitet danach laufend neue Dateien.
+/// Single-Worker-Queue, damit CPU/Memory stabil bleiben.
+@MainActor
+final class BackgroundAnalyzer: ObservableObject {
 
-    private let store: DocumentStore
-    private let settings: SettingsStore
-    private let analysis: AnalysisManager
+    private weak var store: DocumentStore?
+    private weak var settings: SettingsStore?
+    private weak var analysis: AnalysisManager?
+
+    // Warteschlange + Set gegen doppelte Verarbeitung
+    private var queue: [URL] = []
+    private var enqueued: Set<String> = []
+
+    // Worker-Steuerung
     private var isRunning = false
+    private var observers: [AnyCancellable] = []
 
-    init(store: DocumentStore, settings: SettingsStore, analysis: AnalysisManager) {
+    // Public API: Initialisierung/Start
+    func start(store: DocumentStore, settings: SettingsStore, analysis: AnalysisManager) {
         self.store = store
         self.settings = settings
         self.analysis = analysis
 
-        // Auf Quellordner-Events reagieren
-        NotificationCenter.default.addObserver(self,
-                                               selector: #selector(sourceChanged),
-                                               name: .sourceFolderDidChange,
-                                               object: nil)
+        // Beim Start: initial alles einreihen
+        enqueueAllPendingFromStore()
+
+        // Quelle aendert sich? → neu scannen + einreihen
+        NotificationCenter.default.publisher(for: .sourceFolderDidChange)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.store?.scanSourceFolder(self.settings?.sourceBaseURL)
+                self.enqueueAllPendingFromStore()
+                self.kickWorker()
+            }
+            .store(in: &observers)
+
+        // Datei wurde erfolgreich analysiert (aus UI oder Background) → Queue aufraeumen
+        NotificationCenter.default.publisher(for: .analysisDidFinish)
+            .sink { [weak self] note in
+                guard let self, let url = note.object as? URL else { return }
+                self.enqueued.remove(url.path)
+                self.queue.removeAll { $0 == url }
+            }
+            .store(in: &observers)
+
+        // Nach Ablage entfernen (damit die Queue sauber bleibt)
+        NotificationCenter.default.publisher(for: .documentDidArchive)
+            .sink { [weak self] note in
+                guard let self, let url = note.object as? URL else { return }
+                self.enqueued.remove(url.path)
+                self.queue.removeAll { $0 == url }
+            }
+            .store(in: &observers)
+
+        // Wenn Quelle in den Einstellungen umgestellt wird
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .sink { [weak self] _ in
+                // konservativ: neu scannen + neu einreihen
+                self?.store?.scanSourceFolder(self?.settings?.sourceBaseURL)
+                self?.enqueueAllPendingFromStore()
+                self?.kickWorker()
+            }
+            .store(in: &observers)
+
+        // Worker anschieben
+        kickWorker()
     }
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
+    // MARK: Queueing
 
-    @objc private func sourceChanged() {
-        run()
-    }
-
-    /// Kann gefahrlos mehrfach aufgerufen werden; serialisiert intern.
-    func run() {
-        guard !isRunning else { return }
-        isRunning = true
-        Task.detached(priority: .utility) { [weak self] in
-            defer { self?.isRunning = false }
-            await self?.processQueue()
+    /// Alle Dateien aus dem Store einreihen, die noch nicht (persistiert) analysiert sind.
+    private func enqueueAllPendingFromStore() {
+        guard let store, let analysis else { return }
+        for item in store.items {
+            let path = item.fileURL.path
+            // Bereits abgelegt/analysiert? → ueberspringen
+            if analysis.isAnalyzed(item.fileURL) { continue }
+            // Bereits in der Queue? → ueberspringen
+            if enqueued.contains(path) { continue }
+            // Einreihen
+            enqueued.insert(path)
+            queue.append(item.fileURL)
         }
     }
 
-    private func textFromPDF(_ url: URL) -> String {
-        // kleine lokale Text-Extraktion (bis ~6 Seiten)
-        guard let doc = PDFDocument(url: url) else { return "" }
+    /// Ein einzelnes URL einreihen (z. B. aus Watcher-Ereignis in Zukunft)
+    private func enqueue(_ url: URL) {
+        let path = url.path
+        if enqueued.contains(path) { return }
+        enqueued.insert(path)
+        queue.append(url)
+    }
+
+    // MARK: Worker
+
+    private func kickWorker() {
+        guard !isRunning else { return }
+        isRunning = true
+        Task {
+            defer { isRunning = false }
+            while let url = nextJob() {
+                await process(url)
+                // kleine Verschnaufpause, damit System ruhig bleibt
+                try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
+            }
+        }
+    }
+
+    private func nextJob() -> URL? {
+        while !queue.isEmpty {
+            let url = queue.removeFirst()
+            // Existiert die Datei noch?
+            if FileManager.default.fileExists(atPath: url.path) {
+                return url
+            } else {
+                enqueued.remove(url.path)
+            }
+        }
+        return nil
+    }
+
+    // MARK: Verarbeitung
+
+    private func process(_ url: URL) async {
+        guard let settings, let analysis else { return }
+        // Falls inzwischen bereits analysiert → ueberspringen
+        if analysis.isAnalyzed(url) { return }
+
+        // 1) Eingebetteten Text lesen
+        let embedded = extractPDFText(url: url) ?? ""
+
+        // 2) OLLAMA zuerst, falls Text vorhanden
+        if !embedded.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if let s = try? await OllamaClient.suggest(from: embedded,
+                                                       baseURL: settings.ollamaBaseURL,
+                                                       model: settings.ollamaModel),
+               hasUsefulValues(s) {
+                publish(url: url, suggestion: s)
+                return
+            }
+        }
+
+        // 3) OCR-Volltext
+        if let ocrText = try? await OCRService.recognizeFullText(pdfURL: url),
+           !ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if let s2 = try? await OllamaClient.suggest(from: ocrText,
+                                                        baseURL: settings.ollamaBaseURL,
+                                                        model: settings.ollamaModel),
+               hasUsefulValues(s2) {
+                publish(url: url, suggestion: s2)
+                return
+            }
+        }
+
+        // 4) Fallback: heuristische OCR-Vorschlaege
+        if let s3 = try? await OCRService.suggest(from: url) {
+            publish(url: url, suggestion: s3)
+            return
+        }
+
+        // 5) Gescheitert
+        NotificationCenter.default.post(name: .analysisDidFail, object: url)
+        analysis.markFailed(url: url)
+    }
+
+    // MARK: Util
+
+    private func extractPDFText(url: URL) -> String? {
+        guard let doc = PDFDocument(url: url) else { return nil }
         var out = ""
         for i in 0..<min(doc.pageCount, 6) {
-            if let s = doc.page(at: i)?.string {
-                out.append(s + "\n")
-                if out.count > 8000 { break }
-            }
+            guard let page = doc.page(at: i), let s = page.string else { continue }
+            out.append(s + "\n")
+            if out.count > 8_000 { break }
         }
         return out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func hasUseful(_ s: Suggestion) -> Bool {
+    private func hasUsefulValues(_ s: Suggestion) -> Bool {
         (s.datum != nil) || (s.korrespondent?.isEmpty == false) || (s.dokumenttyp?.isEmpty == false)
     }
 
@@ -71,78 +197,27 @@ final class BackgroundAnalyzer {
         if s.dokumenttyp?.isEmpty == false { c += 0.33 }
         if s.datum != nil { c += 0.33 }
         let lower = (s.dokumenttyp ?? "").lowercased()
-        if ["rechnung","mahnung","police","vertrag","offerte","gutschrift","lieferschein"].contains(where: { lower.contains($0) }) { c += 0.05 }
+        if ["rechnung","mahnung","police","vertrag","offerte","gutschrift","lieferschein"].contains(where: { lower.contains($0) }) {
+            c += 0.05
+        }
         return min(c, 1.0)
     }
 
-    private func postResult(url: URL, suggestion: Suggestion) {
-        let st = AnalysisState(status: .analyzed,
-                               confidence: confidence(for: suggestion),
-                               korrespondent: suggestion.korrespondent,
-                               dokumenttyp: suggestion.dokumenttyp,
-                               datum: suggestion.datum)
-        // AnalysisManager updaten
-        DispatchQueue.main.async {
-            self.analysis.markAnalyzed(url: url, state: st)
-            NotificationCenter.default.post(name: .analysisDidFinish, object: url, userInfo: ["state": st])
-        }
-    }
+    private func publish(url: URL, suggestion: Suggestion) {
+        // AnalyseState bauen inkl. Dateifacts
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let state = AnalysisState(
+            status: .analyzed,
+            confidence: confidence(for: suggestion),
+            korrespondent: suggestion.korrespondent,
+            dokumenttyp: suggestion.dokumenttyp,
+            datum: suggestion.datum,
+            fileSize: values?.fileSize.map(Int64.init),
+            fileModDate: values?.contentModificationDate
+        )
 
-    private func postFail(url: URL) {
-        DispatchQueue.main.async {
-            self.analysis.markFailed(url: url)
-            NotificationCenter.default.post(name: .analysisDidFail, object: url)
-        }
-    }
-
-    private func shouldSkip(_ url: URL) -> Bool {
-        // bereits persistiert → überspringen
-        if PersistedStateStore.shared.state(for: url) != nil { return true }
-        // bereits im RAM bekannt → überspringen
-        if analysis.isAnalyzed(url) { return true }
-        return false
-    }
-
-    private func listPDFs() -> [URL] {
-        store.items.map { $0.fileURL }
-    }
-
-    private func processQueue() async {
-        let files = listPDFs()
-        for url in files {
-            if shouldSkip(url) { continue }
-
-            // 1) eingebetteten Text
-            let embedded = textFromPDF(url)
-
-            // 2) Ollama mit eingebettetem Text
-            if !embedded.isEmpty {
-                if let s = try? await OllamaClient.suggest(from: embedded,
-                                                           baseURL: settings.ollamaBaseURL,
-                                                           model: settings.ollamaModel),
-                   hasUseful(s) {
-                    postResult(url: url, suggestion: s)
-                    continue
-                }
-            }
-
-            // 3) OCR-Volltext
-            if let ocrText = try? await OCRService.recognizeFullText(pdfURL: url), !ocrText.isEmpty {
-                if let s2 = try? await OllamaClient.suggest(from: ocrText,
-                                                            baseURL: settings.ollamaBaseURL,
-                                                            model: settings.ollamaModel),
-                   hasUseful(s2) {
-                    postResult(url: url, suggestion: s2)
-                    continue
-                }
-            }
-
-            // 4) Heuristik
-            if let s3 = try? await OCRService.suggest(from: url) {
-                postResult(url: url, suggestion: s3)
-            } else {
-                postFail(url: url)
-            }
-        }
+        // Persistenz + UI informieren
+        analysis?.markAnalyzed(url: url, state: state)
+        NotificationCenter.default.post(name: .analysisDidFinish, object: url, userInfo: ["state": state])
     }
 }
