@@ -10,22 +10,39 @@ import Combine
 
 @MainActor
 final class AnalysisManager: ObservableObject {
-    @Published private(set) var analyzed: Set<URL> = []
+    // Datei-URL -> State
+    @Published private(set) var states: [URL: AnalysisState] = [:]
 
-    func markAnalyzed(_ url: URL) {
-        analyzed.insert(url)
+    func markAnalyzed(url: URL, state: AnalysisState) {
+        states[url] = state
+    }
+
+    func markFailed(url: URL) {
+        states[url] = AnalysisState(status: .failed, confidence: 0.0, korrespondent: nil, dokumenttyp: nil, datum: nil)
     }
 
     func reset() {
-        analyzed.removeAll()
+        states.removeAll()
+    }
+
+    func state(for url: URL) -> AnalysisState? {
+        states[url]
+    }
+
+    func isAnalyzed(_ url: URL) -> Bool {
+        states[url]?.status == .analyzed
     }
 
     func progress(total: Int) -> Double {
         guard total > 0 else { return 0 }
-        return Double(analyzed.count) / Double(total)
+        let done = states.values.filter { $0.status == .analyzed }.count
+        return Double(done) / Double(total)
     }
+
+    var analyzedCount: Int { states.values.filter { $0.status == .analyzed }.count }
 }
 
 extension Notification.Name {
     static let analysisDidFinish = Notification.Name("DokuSort.analysisDidFinish")
+    static let analysisDidFail   = Notification.Name("DokuSort.analysisDidFail")
 }

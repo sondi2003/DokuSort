@@ -16,22 +16,28 @@ struct MainDashboardView: View {
     @State private var selection: DocumentItem?
     @State private var showSettings = false
 
+    // Suche + Filter
+    @State private var searchText: String = ""
+    enum StatusFilter: String, CaseIterable, Identifiable { case all = "Alle", pending = "Wartend", analyzed = "Analysiert"
+        var id: String { rawValue } }
+    @State private var statusFilter: StatusFilter = .all
+
     var body: some View {
         NavigationStack {
             HStack(spacing: 0) {
                 sidebar
-                    .frame(minWidth: 260, idealWidth: 300, maxWidth: 340)
+                    .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
                     .background(.thinMaterial)
 
                 Divider()
 
                 preview
-                    .frame(minWidth: 420)
+                    .frame(minWidth: 460)
 
                 Divider()
 
                 metadataPanel
-                    .frame(minWidth: 420, idealWidth: 520)
+                    .frame(minWidth: 440, idealWidth: 540)
             }
             .navigationTitle("DokuSort Dashboard")
             .toolbar {
@@ -59,10 +65,16 @@ struct MainDashboardView: View {
                 }
                 autoSelectFirstIfNeeded()
             }
+            // Analyse-Resultate übernehmen
             .onReceive(NotificationCenter.default.publisher(for: .analysisDidFinish)) { note in
-                if let url = note.object as? URL {
-                    analysis.markAnalyzed(url)
-                }
+                guard
+                    let url = note.object as? URL,
+                    let st = note.userInfo?["state"] as? AnalysisState
+                else { return }
+                analysis.markAnalyzed(url: url, state: st)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .analysisDidFail)) { note in
+                if let url = note.object as? URL { analysis.markFailed(url: url) }
             }
         }
     }
@@ -71,7 +83,8 @@ struct MainDashboardView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
+            // Kopf + Fortschritt
+            VStack(alignment: .leading, spacing: 8) {
                 Label("Intelligente Verarbeitung", systemImage: "wand.and.stars")
                     .font(.headline)
 
@@ -80,13 +93,13 @@ struct MainDashboardView: View {
                 HStack(spacing: 8) {
                     ProgressView(value: ratio)
                         .progressViewStyle(.linear)
-                        .frame(maxWidth: 160)
-                    Text("\(analysis.analyzed.count)/\(total)")
+                        .frame(maxWidth: 180)
+                    Text("\(analysis.analyzedCount)/\(total)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 if total > 0 {
-                    Text("Noch \(max(total - analysis.analyzed.count, 0)) Dokumente in der Warteschlange")
+                    Text("Noch \(max(total - analysis.analyzedCount, 0)) in Warteschlange")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -94,10 +107,10 @@ struct MainDashboardView: View {
             .padding(.horizontal)
             .padding(.top, 12)
 
-            // Suche (Platzhalter)
+            // Suche
             HStack {
                 Image(systemName: "magnifyingglass")
-                TextField("Dokumente durchsuchen…", text: .constant(""))
+                TextField("Dokumente durchsuchen…", text: $searchText)
                     .textFieldStyle(.plain)
             }
             .padding(.horizontal)
@@ -105,21 +118,38 @@ struct MainDashboardView: View {
             .background(RoundedRectangle(cornerRadius: 8).fill(.bar))
             .padding(.horizontal)
 
-            // Liste
-            List(store.items, selection: $selection) { item in
+            // Filter (Status)
+            Picker("Status", selection: $statusFilter) {
+                ForEach(StatusFilter.allCases) { f in
+                    Text(f.rawValue).tag(f)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+
+            // Liste (gefiltert)
+            List(filteredItems, selection: $selection) { item in
                 HStack(spacing: 12) {
                     Image(systemName: "doc.text")
+
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.fileName).lineLimit(1)
-                        if let size = item.fileSize {
-                            Text(byteCount(size)).font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            if let st = analysis.state(for: item.fileURL) {
+                                ConfidenceBar(value: st.confidence)
+                                if let typ = st.dokumenttyp, !typ.isEmpty {
+                                    TypeBadge(typ)
+                                }
+                            } else {
+                                ConfidenceBar(value: 0)
+                            }
                         }
                     }
                     Spacer()
                     Circle()
-                        .fill(analysis.analyzed.contains(item.fileURL) ? .green.opacity(0.85) : .gray.opacity(0.35))
+                        .fill(analysis.isAnalyzed(item.fileURL) ? .green.opacity(0.85) : .gray.opacity(0.35))
                         .frame(width: 8, height: 8)
-                        .help(analysis.analyzed.contains(item.fileURL) ? "KI-analysiert" : "Wartend")
+                        .help(analysis.isAnalyzed(item.fileURL) ? "KI-analysiert" : "Wartend")
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { selection = item }
@@ -129,11 +159,36 @@ struct MainDashboardView: View {
             Spacer()
 
             HStack {
-                Text("\(store.items.count) Dokumente").font(.caption).foregroundStyle(.secondary)
+                Text("\(filteredItems.count) Treffer").font(.caption).foregroundStyle(.secondary)
                 Spacer()
             }
             .padding(.horizontal)
             .padding(.bottom, 8)
+        }
+    }
+
+    // Gefilterte Items
+    private var filteredItems: [DocumentItem] {
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return store.items.filter { item in
+            // Statusfilter
+            switch statusFilter {
+            case .all:      break
+            case .pending:  if analysis.isAnalyzed(item.fileURL) { return false }
+            case .analyzed: if !analysis.isAnalyzed(item.fileURL) { return false }
+            }
+            // Textsuche (Dateiname + erkannte Felder)
+            if q.isEmpty { return true }
+            if item.fileName.lowercased().contains(q) { return true }
+            if let st = analysis.state(for: item.fileURL) {
+                if (st.korrespondent ?? "").lowercased().contains(q) { return true }
+                if (st.dokumenttyp ?? "").lowercased().contains(q) { return true }
+                if let d = st.datum {
+                    let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+                    if f.string(from: d).contains(q) { return true }
+                }
+            }
+            return false
         }
     }
 
@@ -159,7 +214,7 @@ struct MainDashboardView: View {
                     item: sel,
                     onPrev: { selection = prev(of: sel) },
                     onNext: { selection = next(of: sel) },
-                    embedPreview: false              // << hier ausschalten
+                    embedPreview: false
                 )
             } else {
                 placeholder("Bereit", sub: "Sobald ein PDF gewählt ist, erscheinen hier die erkannten Daten.")
@@ -202,5 +257,52 @@ struct MainDashboardView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .underPageBackgroundColor))
+    }
+}
+
+// Mini-Konfidenz-Balken
+private struct ConfidenceBar: View {
+    var value: Double // 0...1
+    var body: some View {
+        GeometryReader { geo in
+            let w = max(0, min(geo.size.width * value, geo.size.width))
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3).fill(.gray.opacity(0.2))
+                RoundedRectangle(cornerRadius: 3).fill( value >= 0.7 ? .green.opacity(0.6) : (value >= 0.35 ? .orange.opacity(0.6) : .red.opacity(0.6)) )
+                    .frame(width: w)
+            }
+        }
+        .frame(width: 60, height: 6)
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .help("Konfidenz: \((Int(value * 100)))%")
+    }
+}
+
+// Typ-Badge
+private struct TypeBadge: View {
+    let type: String
+    init(_ t: String) { self.type = t }
+    var body: some View {
+        Text(type)
+            .font(.caption2)
+            .padding(.vertical, 3)
+            .padding(.horizontal, 6)
+            .background(
+                Capsule().fill(colorFor(type).opacity(0.18))
+            )
+            .overlay(
+                Capsule().stroke(colorFor(type).opacity(0.35), lineWidth: 0.5)
+            )
+    }
+    private func colorFor(_ t: String) -> Color {
+        let l = t.lowercased()
+        if l.contains("rechnung") { return .blue }
+        if l.contains("mahnung")  { return .red }
+        if l.contains("police")   { return .green }
+        if l.contains("vertrag")  { return .purple }
+        if l.contains("offerte")  { return .orange }
+        if l.contains("gutschrift"){ return .teal }
+        if l.contains("liefer")   { return .indigo }
+        return .gray
     }
 }

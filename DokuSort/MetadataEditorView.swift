@@ -11,7 +11,8 @@ struct MetadataEditorView: View {
     let item: DocumentItem
     var onPrev: (() -> Void)? = nil
     var onNext: (() -> Void)? = nil
-    var embedPreview: Bool = true   // wenn false: keine eigene PDF-Vorschau im Editor
+    /// Wenn false: keine eigene PDF-Vorschau im Editor (im Dashboard nutzen wir die grosse Mitte)
+    var embedPreview: Bool = true
 
     @EnvironmentObject private var catalog: CatalogStore
     @EnvironmentObject private var settings: SettingsStore
@@ -44,8 +45,7 @@ struct MetadataEditorView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
-                    // ... (Rest des rechten Panels unverändert)
-                    // Batch Bar
+                    // Navigation für Batch
                     HStack(spacing: 12) {
                         Button { onPrev?() } label: { Label("Vorheriges", systemImage: "chevron.left") }
                             .disabled(onPrev == nil || running)
@@ -193,10 +193,9 @@ struct MetadataEditorView: View {
             typInput = ""
             meta = .empty()
         }
-        // << Automatische Analyse: bei jedem neuen Item starten
+        // Automatische Analyse: bei jedem neuen Item starten
         .task(id: item.fileURL) {
             await runAutoSuggestionAndApply()
-            NotificationCenter.default.post(name: .analysisDidFinish, object: item.fileURL)
         }
         .navigationTitle(item.fileName)
         .alert(item: Binding(get: { alertMsg.map { MsgWrapper(message: $0) } }, set: { _ in alertMsg = nil })) { w in
@@ -213,7 +212,7 @@ struct MetadataEditorView: View {
     }
 
     // MARK: Analyse (Ollama zuerst, dann OCR-Fallback) + Auto-Übernahme
-
+    /// Sendet bei Erfolg .analysisDidFinish mit AnalysisState (inkl. confidence); bei Fehler .analysisDidFail.
     private func runAutoSuggestionAndApply() async {
         // Schutz: nicht doppelt analysieren
         if running { return }
@@ -237,7 +236,15 @@ struct MetadataEditorView: View {
                     applySuggestionOverwriting(s)
                     lastSuggestion = s
                     statusText = "KI-Ergebnis übernommen"
-                    NotificationCenter.default.post(name: .analysisDidFinish, object: item.fileURL)
+
+                    let st = AnalysisState(
+                        status: .analyzed,
+                        confidence: confidence(for: s),
+                        korrespondent: s.korrespondent,
+                        dokumenttyp: s.dokumenttyp,
+                        datum: s.datum
+                    )
+                    NotificationCenter.default.post(name: .analysisDidFinish, object: item.fileURL, userInfo: ["state": st])
                     return
                 }
             }
@@ -255,6 +262,15 @@ struct MetadataEditorView: View {
                     applySuggestionOverwriting(s2)
                     lastSuggestion = s2
                     statusText = "KI-Ergebnis (OCR) übernommen"
+
+                    let st = AnalysisState(
+                        status: .analyzed,
+                        confidence: confidence(for: s2),
+                        korrespondent: s2.korrespondent,
+                        dokumenttyp: s2.dokumenttyp,
+                        datum: s2.datum
+                    )
+                    NotificationCenter.default.post(name: .analysisDidFinish, object: item.fileURL, userInfo: ["state": st])
                     return
                 }
             }
@@ -266,14 +282,37 @@ struct MetadataEditorView: View {
             lastSuggestion = s3
             statusText = "OCR-Ergebnis übernommen"
 
+            let st = AnalysisState(
+                status: .analyzed,
+                confidence: confidence(for: s3),
+                korrespondent: s3.korrespondent,
+                dokumenttyp: s3.dokumenttyp,
+                datum: s3.datum
+            )
+            NotificationCenter.default.post(name: .analysisDidFinish, object: item.fileURL, userInfo: ["state": st])
+
         } catch {
             alertMsg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             statusText = "Analyse fehlgeschlagen"
+            NotificationCenter.default.post(name: .analysisDidFail, object: item.fileURL)
         }
     }
 
     private func hasUsefulValues(_ s: Suggestion) -> Bool {
         (s.datum != nil) || (s.korrespondent?.isEmpty == false) || (s.dokumenttyp?.isEmpty == false)
+    }
+
+    /// einfache Konfidenz-Heuristik 0...1
+    private func confidence(for s: Suggestion) -> Double {
+        var c: Double = 0
+        if s.korrespondent?.isEmpty == false { c += 0.33 }
+        if s.dokumenttyp?.isEmpty == false { c += 0.33 }
+        if s.datum != nil { c += 0.33 }
+        let lower = (s.dokumenttyp ?? "").lowercased()
+        if ["rechnung","mahnung","police","vertrag","offerte","gutschrift","lieferschein"].contains(where: { lower.contains($0) }) {
+            c += 0.05
+        }
+        return min(c, 1.0)
     }
 
     private func applySuggestionOverwriting(_ s: Suggestion) {
@@ -384,7 +423,7 @@ struct MetadataEditorView: View {
     private struct MsgWrapper: Identifiable { let id = UUID(); let message: String }
 }
 
-// macOS PDFKit Wrapper
+// macOS PDFKit Wrapper (nur EINMAL im Projekt definieren!)
 struct PDFKitNSView: NSViewRepresentable {
     let url: URL
     func makeNSView(context: Context) -> PDFView {
