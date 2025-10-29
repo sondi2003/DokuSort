@@ -9,6 +9,9 @@ import SwiftUI
 
 @main
 struct DokuSortApp: App {
+    // App-Delegate für Fenster-/Lebenszyklusverhalten
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
     @StateObject private var store = DocumentStore()
     @StateObject private var settings = SettingsStore()
     @StateObject private var catalog = CatalogStore()
@@ -46,6 +49,12 @@ struct DokuSortApp: App {
                     watcher.startWatching(url: newValue)
                     store.scanSourceFolder(newValue)
                     analysis.reset()
+                }
+                // Hauptfenster registrieren, damit es aus Menü/Dock sicher reaktiviert werden kann
+                .onAppear {
+                    if let window = NSApp.keyWindow ?? NSApp.windows.first {
+                        WindowManager.shared.registerMainWindow(window)
+                    }
                 }
         }
     }
