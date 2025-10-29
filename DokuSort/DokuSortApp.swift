@@ -9,7 +9,6 @@ import SwiftUI
 
 @main
 struct DokuSortApp: App {
-    // App-Delegate für Fenster-/Lebenszyklusverhalten
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     @StateObject private var store = DocumentStore()
@@ -18,8 +17,8 @@ struct DokuSortApp: App {
     @StateObject private var analysis = AnalysisManager()
     @StateObject private var watcher = SourceWatcher()
 
-    // Retain der StatusBar-Instanz
     @State private var statusBarController: StatusBarController?
+    @State private var bgAnalyzer: BackgroundAnalyzer?
 
     var body: some Scene {
         WindowGroup {
@@ -29,32 +28,28 @@ struct DokuSortApp: App {
                 .environmentObject(catalog)
                 .environmentObject(analysis)
                 .onAppear {
-                    // Watcher starten (falls Quelle gewählt) + initial scannen
+                    // Persistenz ist über Singleton geladen; AnalysisManager hat gebootstrapped.
+                    // Watcher starten + initial scannen
                     watcher.startWatching(url: settings.sourceBaseURL)
                     if settings.sourceBaseURL != nil && store.items.isEmpty {
                         store.scanSourceFolder(settings.sourceBaseURL)
                     }
-                    // Statusbar-Icon initialisieren (einmalig)
+                    // Statusbar-Icon
                     if statusBarController == nil {
-                        statusBarController = StatusBarController(
-                            store: store,
-                            settings: settings,
-                            analysis: analysis,
-                            watcher: watcher
-                        )
+                        statusBarController = StatusBarController(store: store,
+                                                                  settings: settings,
+                                                                  analysis: analysis,
+                                                                  watcher: watcher)
+                    }
+                    // Hauptfenster für WindowManager registrieren
+                    if let window = NSApp.keyWindow ?? NSApp.windows.first {
+                        WindowManager.shared.registerMainWindow(window)
                     }
                 }
-                // Quelle geändert? ⇒ Watcher neu starten + neu scannen + Fortschritt zurücksetzen
                 .onChange(of: settings.sourceBaseURL) { _, newValue in
                     watcher.startWatching(url: newValue)
                     store.scanSourceFolder(newValue)
                     analysis.reset()
-                }
-                // Hauptfenster registrieren, damit es aus Menü/Dock sicher reaktiviert werden kann
-                .onAppear {
-                    if let window = NSApp.keyWindow ?? NSApp.windows.first {
-                        WindowManager.shared.registerMainWindow(window)
-                    }
                 }
         }
     }

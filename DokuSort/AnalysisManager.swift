@@ -8,41 +8,91 @@
 import Foundation
 import Combine
 
+/// Verwalten der Analyse-States inkl. Persistenz.
 @MainActor
 final class AnalysisManager: ObservableObject {
-    // Datei-URL -> State
-    @Published private(set) var states: [URL: AnalysisState] = [:]
 
-    func markAnalyzed(url: URL, state: AnalysisState) {
-        states[url] = state
+    // Eigener Publisher, da wir manuell `objectWillChange.send()` ausloesen.
+    let objectWillChange = ObservableObjectPublisher()
+
+    private let persistence = PersistedStateStore.shared
+    private var cache: [String: AnalysisState] = [:] // Key = fileURL.path
+
+    init() {
+        persistence.loadFromDisk()
+        self.cache = [:]
     }
 
-    func markFailed(url: URL) {
-        states[url] = AnalysisState(status: .failed, confidence: 0.0, korrespondent: nil, dokumenttyp: nil, datum: nil)
-    }
-
-    func reset() {
-        states.removeAll()
-    }
-
-    func state(for url: URL) -> AnalysisState? {
-        states[url]
-    }
-
-    func isAnalyzed(_ url: URL) -> Bool {
-        states[url]?.status == .analyzed
+    // UI: Zaehler/Progress
+    var analyzedCount: Int {
+        cache.values.filter { $0.status == .analyzed }.count
     }
 
     func progress(total: Int) -> Double {
         guard total > 0 else { return 0 }
-        let done = states.values.filter { $0.status == .analyzed }.count
-        return Double(done) / Double(total)
+        return Double(analyzedCount) / Double(total)
     }
 
-    var analyzedCount: Int { states.values.filter { $0.status == .analyzed }.count }
-}
+    // MARK: Query
 
-extension Notification.Name {
-    static let analysisDidFinish = Notification.Name("DokuSort.analysisDidFinish")
-    static let analysisDidFail   = Notification.Name("DokuSort.analysisDidFail")
+    func state(for url: URL) -> AnalysisState? {
+        if let s = cache[url.path] {
+            return s
+        }
+        if let s = persistence.state(for: url),
+           isStateValid(s, for: url) {
+            cache[url.path] = s
+            return s
+        }
+        return nil
+    }
+
+    func isAnalyzed(_ url: URL) -> Bool {
+        if let s = state(for: url) { return s.status == .analyzed }
+        return false
+    }
+
+    // MARK: Mutation
+
+    func markAnalyzed(url: URL, state: AnalysisState) {
+        guard isStateValid(state, for: url) else { return }
+        cache[url.path] = state
+        persistence.upsert(url: url, state: state)
+        objectWillChange.send()
+    }
+
+    func markFailed(url: URL) {
+        let s = AnalysisState(status: .failed,
+                              confidence: 0,
+                              korrespondent: nil,
+                              dokumenttyp: nil,
+                              datum: nil,
+                              fileSize: (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init),
+                              fileModDate: (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate))
+        cache[url.path] = s
+        persistence.upsert(url: url, state: s)
+        objectWillChange.send()
+    }
+
+    func remove(url: URL) {
+        cache.removeValue(forKey: url.path)
+        persistence.remove(url: url)
+        objectWillChange.send()
+    }
+
+    func reset() {
+        cache.removeAll()
+        persistence.cleanupMissingFiles()
+        objectWillChange.send()
+    }
+
+    // MARK: Helpers
+
+    private func isStateValid(_ s: AnalysisState, for url: URL) -> Bool {
+        guard let sizeSaved = s.fileSize, let modSaved = s.fileModDate else { return true }
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let sizeNow = values?.fileSize.map(Int64.init)
+        let modNow  = values?.contentModificationDate
+        return sizeSaved == sizeNow && modSaved == modNow
+    }
 }

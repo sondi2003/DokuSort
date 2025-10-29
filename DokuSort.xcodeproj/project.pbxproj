@@ -10,6 +10,29 @@
 		792D0C822EB243B700E0C989 /* OllamaClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 792D0C812EB243B300E0C989 /* OllamaClient.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		792D0CFB2EB2C91400E0C989 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		792D0D152EB2CB4000E0C989 /* Embed XPC Services */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/XPCServices";
+			dstSubfolderSpec = 16;
+			files = (
+			);
+			name = "Embed XPC Services";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		792D0C532EB23F0800E0C989 /* DokuSort.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DokuSort.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		792D0C812EB243B300E0C989 /* OllamaClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaClient.swift; sourceTree = "<group>"; };
@@ -61,6 +84,8 @@
 				792D0C4F2EB23F0800E0C989 /* Sources */,
 				792D0C502EB23F0800E0C989 /* Frameworks */,
 				792D0C512EB23F0800E0C989 /* Resources */,
+				792D0CFB2EB2C91400E0C989 /* Embed Foundation Extensions */,
+				792D0D152EB2CB4000E0C989 /* Embed XPC Services */,
 			);
 			buildRules = (
 			);

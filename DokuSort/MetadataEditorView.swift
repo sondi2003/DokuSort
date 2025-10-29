@@ -1,3 +1,10 @@
+//
+//  PersistedStateStore.swift
+//  DokuSort
+//
+//  Created by Richard Sonderegger on 29.10.2025.
+//
+
 import SwiftUI
 import PDFKit
 
@@ -11,8 +18,7 @@ struct MetadataEditorView: View {
     let item: DocumentItem
     var onPrev: (() -> Void)? = nil
     var onNext: (() -> Void)? = nil
-    /// Wenn false: keine eigene PDF-Vorschau im Editor (im Dashboard nutzen wir die grosse Mitte)
-    var embedPreview: Bool = true
+    var embedPreview: Bool = true   // wenn false: keine eigene PDF-Vorschau im Editor
 
     @EnvironmentObject private var catalog: CatalogStore
     @EnvironmentObject private var settings: SettingsStore
@@ -45,7 +51,6 @@ struct MetadataEditorView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
-                    // Navigation für Batch
                     HStack(spacing: 12) {
                         Button { onPrev?() } label: { Label("Vorheriges", systemImage: "chevron.left") }
                             .disabled(onPrev == nil || running)
@@ -188,12 +193,10 @@ struct MetadataEditorView: View {
             }
         }
         .onAppear {
-            // Felder leeren und frisches Datum setzen
             korInput = ""
             typInput = ""
             meta = .empty()
         }
-        // Automatische Analyse: bei jedem neuen Item starten
         .task(id: item.fileURL) {
             await runAutoSuggestionAndApply()
         }
@@ -211,10 +214,9 @@ struct MetadataEditorView: View {
         }
     }
 
-    // MARK: Analyse (Ollama zuerst, dann OCR-Fallback) + Auto-Übernahme
-    /// Sendet bei Erfolg .analysisDidFinish mit AnalysisState (inkl. confidence); bei Fehler .analysisDidFail.
+    // MARK: Analyse (Ollama → OCR-Fallback) + Publish
+
     private func runAutoSuggestionAndApply() async {
-        // Schutz: nicht doppelt analysieren
         if running { return }
         running = true
         statusText = "Analysiere mit KI, bitte warten …"
@@ -224,10 +226,8 @@ struct MetadataEditorView: View {
         }
 
         do {
-            // 1) Versuche eingebetteten PDF-Text
             let embedded = extractPDFText(url: item.fileURL) ?? ""
 
-            // 2) OLLAMA mit eingebettetem Text
             if !embedded.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 if let s = try? await OllamaClient.suggest(from: embedded,
                                                            baseURL: settings.ollamaBaseURL,
@@ -235,25 +235,15 @@ struct MetadataEditorView: View {
                    hasUsefulValues(s) {
                     applySuggestionOverwriting(s)
                     lastSuggestion = s
+                    publishFinished(using: s)
                     statusText = "KI-Ergebnis übernommen"
-
-                    let st = AnalysisState(
-                        status: .analyzed,
-                        confidence: confidence(for: s),
-                        korrespondent: s.korrespondent,
-                        dokumenttyp: s.dokumenttyp,
-                        datum: s.datum
-                    )
-                    NotificationCenter.default.post(name: .analysisDidFinish, object: item.fileURL, userInfo: ["state": st])
                     return
                 }
             }
 
-            // 3) OCR-Volltext erzeugen
             statusText = "Kein Text eingebettet – OCR wird ausgeführt …"
             let ocrText = try? await OCRService.recognizeFullText(pdfURL: item.fileURL)
 
-            // 4) OLLAMA mit OCR-Text
             if let ocrText, !ocrText.isEmpty {
                 if let s2 = try? await OllamaClient.suggest(from: ocrText,
                                                             baseURL: settings.ollamaBaseURL,
@@ -261,35 +251,18 @@ struct MetadataEditorView: View {
                    hasUsefulValues(s2) {
                     applySuggestionOverwriting(s2)
                     lastSuggestion = s2
+                    publishFinished(using: s2)
                     statusText = "KI-Ergebnis (OCR) übernommen"
-
-                    let st = AnalysisState(
-                        status: .analyzed,
-                        confidence: confidence(for: s2),
-                        korrespondent: s2.korrespondent,
-                        dokumenttyp: s2.dokumenttyp,
-                        datum: s2.datum
-                    )
-                    NotificationCenter.default.post(name: .analysisDidFinish, object: item.fileURL, userInfo: ["state": st])
                     return
                 }
             }
 
-            // 5) Fallback: rein heuristische OCR-Vorschläge
             statusText = "KI ohne klaren Treffer – nutze OCR-Heuristik …"
             let s3 = try await OCRService.suggest(from: item.fileURL)
             applySuggestionOverwriting(s3)
             lastSuggestion = s3
+            publishFinished(using: s3)
             statusText = "OCR-Ergebnis übernommen"
-
-            let st = AnalysisState(
-                status: .analyzed,
-                confidence: confidence(for: s3),
-                korrespondent: s3.korrespondent,
-                dokumenttyp: s3.dokumenttyp,
-                datum: s3.datum
-            )
-            NotificationCenter.default.post(name: .analysisDidFinish, object: item.fileURL, userInfo: ["state": st])
 
         } catch {
             alertMsg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -302,7 +275,6 @@ struct MetadataEditorView: View {
         (s.datum != nil) || (s.korrespondent?.isEmpty == false) || (s.dokumenttyp?.isEmpty == false)
     }
 
-    /// einfache Konfidenz-Heuristik 0...1
     private func confidence(for s: Suggestion) -> Double {
         var c: Double = 0
         if s.korrespondent?.isEmpty == false { c += 0.33 }
@@ -315,11 +287,25 @@ struct MetadataEditorView: View {
         return min(c, 1.0)
     }
 
+    private func publishFinished(using s: Suggestion) {
+        // file facts
+        let values = try? item.fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let state = AnalysisState(
+            status: .analyzed,
+            confidence: confidence(for: s),
+            korrespondent: s.korrespondent,
+            dokumenttyp: s.dokumenttyp,
+            datum: s.datum,
+            fileSize: values?.fileSize.map(Int64.init),
+            fileModDate: values?.contentModificationDate
+        )
+        NotificationCenter.default.post(name: .analysisDidFinish, object: item.fileURL, userInfo: ["state": state])
+    }
+
     private func applySuggestionOverwriting(_ s: Suggestion) {
         if let d = s.datum { meta.datum = d }
         if let k = s.korrespondent { korInput = k }
         if let t = s.dokumenttyp { typInput = t }
-        // Sofort in Katalog mitschreiben (lernt schneller)
         persistInputsToCatalog()
     }
 
@@ -355,6 +341,10 @@ struct MetadataEditorView: View {
             UndoStore.shared.registerMove(from: result.sourceURL, to: result.finalURL)
             store.scanSourceFolder(settings.sourceBaseURL)
             alertMsg = "Ablage erfolgreich: \(result.finalURL.lastPathComponent)"
+
+            // → Persistenz bereinigen (JSON-Eintrag weg)
+            NotificationCenter.default.post(name: .documentDidArchive, object: item.fileURL)
+
             if nextAfter { onNext?() }
         } catch let err as FileOpsError {
             switch err {
@@ -423,7 +413,7 @@ struct MetadataEditorView: View {
     private struct MsgWrapper: Identifiable { let id = UUID(); let message: String }
 }
 
-// macOS PDFKit Wrapper (nur EINMAL im Projekt definieren!)
+// macOS PDFKit Wrapper (einmal im Projekt)
 struct PDFKitNSView: NSViewRepresentable {
     let url: URL
     func makeNSView(context: Context) -> PDFView {
@@ -439,8 +429,4 @@ struct PDFKitNSView: NSViewRepresentable {
             pdfView.document = PDFDocument(url: url)
         }
     }
-}
-
-private extension View {
-    func eraseToAnyView() -> AnyView { AnyView(self) }
 }

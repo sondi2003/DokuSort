@@ -72,6 +72,12 @@ struct MainDashboardView: View {
                 }
             }
             // Analyse-Resultate übernehmen
+            .onReceive(NotificationCenter.default.publisher(for: .documentDidArchive)) { note in
+                if let url = note.object as? URL {
+                    analysis.remove(url: url)
+                }
+            }
+            
             .onReceive(NotificationCenter.default.publisher(for: .analysisDidFinish)) { note in
                 guard
                     let url = note.object as? URL,
