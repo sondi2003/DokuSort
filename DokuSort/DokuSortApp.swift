@@ -13,7 +13,10 @@ struct DokuSortApp: App {
     @StateObject private var settings = SettingsStore()
     @StateObject private var catalog = CatalogStore()
     @StateObject private var analysis = AnalysisManager()
-    @StateObject private var watcher = SourceWatcher()   // << neu
+    @StateObject private var watcher = SourceWatcher()
+
+    // Retain der StatusBar-Instanz
+    @State private var statusBarController: StatusBarController?
 
     var body: some Scene {
         WindowGroup {
@@ -23,13 +26,22 @@ struct DokuSortApp: App {
                 .environmentObject(catalog)
                 .environmentObject(analysis)
                 .onAppear {
-                    // Beim ersten Start: wenn Quelle gesetzt, sofort Watcher starten + initial scannen
+                    // Watcher starten (falls Quelle gewählt) + initial scannen
                     watcher.startWatching(url: settings.sourceBaseURL)
                     if settings.sourceBaseURL != nil && store.items.isEmpty {
                         store.scanSourceFolder(settings.sourceBaseURL)
                     }
+                    // Statusbar-Icon initialisieren (einmalig)
+                    if statusBarController == nil {
+                        statusBarController = StatusBarController(
+                            store: store,
+                            settings: settings,
+                            analysis: analysis,
+                            watcher: watcher
+                        )
+                    }
                 }
-                // Wenn sich die Quelle ändert → Watcher neu starten und neu scannen
+                // Quelle geändert? ⇒ Watcher neu starten + neu scannen + Fortschritt zurücksetzen
                 .onChange(of: settings.sourceBaseURL) { _, newValue in
                     watcher.startWatching(url: newValue)
                     store.scanSourceFolder(newValue)
