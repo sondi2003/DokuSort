@@ -76,6 +76,14 @@ struct MainDashboardView: View {
             .onReceive(NotificationCenter.default.publisher(for: .analysisDidFail)) { note in
                 if let url = note.object as? URL { analysis.markFailed(url: url) }
             }
+            // NEU: Live-Refresh bei Änderungen im Quellordner
+            .onReceive(NotificationCenter.default.publisher(for: .sourceFolderDidChange)) { _ in
+                store.scanSourceFolder(settings.sourceBaseURL)
+                // Auswahl sanft stabil halten: wenn altes File weg ist, ersten Eintrag wählen
+                if let sel = selection, !store.items.contains(sel) {
+                    selection = store.items.first
+                }
+            }
         }
     }
 
@@ -240,13 +248,6 @@ struct MainDashboardView: View {
         guard let idx = store.items.firstIndex(of: item) else { return nil }
         let pi = idx - 1
         return pi >= 0 ? store.items[pi] : nil
-    }
-
-    private func byteCount(_ bytes: Int64) -> String {
-        let f = ByteCountFormatter()
-        f.allowedUnits = [.useMB, .useKB]
-        f.countStyle = .file
-        return f.string(fromByteCount: bytes)
     }
 
     private func placeholder(_ title: String, sub: String) -> some View {
