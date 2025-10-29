@@ -65,6 +65,12 @@ struct MainDashboardView: View {
                 }
                 autoSelectFirstIfNeeded()
             }
+            
+            .onAppear {
+                if let window = NSApp.keyWindow {
+                    WindowManager.shared.registerMainWindow(window)
+                }
+            }
             // Analyse-Resultate übernehmen
             .onReceive(NotificationCenter.default.publisher(for: .analysisDidFinish)) { note in
                 guard

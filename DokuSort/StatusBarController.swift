@@ -152,8 +152,10 @@ final class StatusBarController: NSObject {
     // MARK: - Actions
 
     @objc private func openMainWindow() {
-        // App in den Vordergrund bringen (öffnet/aktiviert das Hauptfenster)
-        NSApp.activate(ignoringOtherApps: true)
+        // Bringt App in den Vordergrund und zeigt das Hauptfenster
+        DispatchQueue.main.async {
+            WindowManager.shared.showMainWindow()
+        }
     }
 
     @objc private func scanNow() {
