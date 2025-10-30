@@ -493,6 +493,11 @@ struct MetadataEditorView: View {
 
     private func combinedKorrespondentSuggestions(limit: Int = 8) -> [String] {
         var suggestions = catalog.suggestions(for: korInput, in: .korrespondent, limit: limit)
+        if !existingCorrespondentFolders.isEmpty {
+            suggestions = suggestions.filter { candidate in
+                existingCorrespondentFolders.contains { $0.caseInsensitiveCompare(candidate) == .orderedSame }
+            }
+        }
         let lowerNeedle = korInput.lowercased()
         let trimmedNeedle = lowerNeedle.trimmingCharacters(in: .whitespaces)
 

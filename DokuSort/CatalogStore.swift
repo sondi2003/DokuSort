@@ -62,53 +62,75 @@ final class CatalogStore: ObservableObject {
             return KorrespondentResolution(canonical: trimmed, displayName: trimmed, decision: .partial)
         }
 
-        if let existing = korrespondentAliases[key] {
-            return KorrespondentResolution(canonical: existing, displayName: existing, decision: .aliasMapped(to: existing))
+        func containsCaseInsensitive(_ array: [String], _ value: String) -> Bool {
+            array.contains { $0.caseInsensitiveCompare(value) == .orderedSame }
         }
 
-        if let direct = korrespondenten.first(where: { CorrespondentNormalizer.normalizedKey(for: $0) == key }) {
+        let canonicalCandidates: [String]
+        let additionalCandidates: [String]
+        if existingFolders.isEmpty {
+            canonicalCandidates = korrespondenten
+            additionalCandidates = []
+        } else {
+            canonicalCandidates = existingFolders
+            additionalCandidates = korrespondenten.filter { !containsCaseInsensitive(existingFolders, $0) }
+        }
+
+        if let existing = korrespondentAliases[key] {
+            if containsCaseInsensitive(canonicalCandidates, existing) || containsCaseInsensitive(additionalCandidates, existing) {
+                return KorrespondentResolution(canonical: existing, displayName: existing, decision: .aliasMapped(to: existing))
+            } else {
+                korrespondentAliases.removeValue(forKey: key)
+                save()
+            }
+        }
+
+        let directSources = canonicalCandidates + additionalCandidates
+        if let direct = directSources.first(where: { CorrespondentNormalizer.normalizedKey(for: $0) == key }) {
+            registerKorrespondent(direct)
             korrespondentAliases[key] = direct
             save()
             return KorrespondentResolution(canonical: direct, displayName: direct, decision: .existingCanonical(name: direct))
         }
 
-        if let folder = existingFolders.first(where: { CorrespondentNormalizer.normalizedKey(for: $0) == key }) {
-            registerKorrespondent(folder)
-            korrespondentAliases[key] = folder
-            save()
-            return KorrespondentResolution(canonical: folder, displayName: folder, decision: .existingCanonical(name: folder))
-        }
+        var bestCandidate: (name: String, bigram: Double, keyScore: Double, fromFolder: Bool)? = nil
 
-        var bestName: String? = nil
-        var bestScore: Double = 0
-        var fromFolder = false
+        func considerCandidate(_ candidate: String, fromFolder: Bool) {
+            let bigramScore = CorrespondentNormalizer.similarity(between: trimmed, and: candidate)
+            let candidateKey = CorrespondentNormalizer.normalizedKey(for: candidate)
+            let keyScore = CorrespondentNormalizer.normalizedKeySimilarity(betweenNormalized: key, andNormalized: candidateKey)
+            let combined = max(bigramScore, keyScore)
+            guard combined > (bestCandidate.map { max($0.bigram, $0.keyScore) } ?? -1) else { return }
 
-        for candidate in korrespondenten {
-            let score = CorrespondentNormalizer.similarity(between: trimmed, and: candidate)
-            if score > bestScore {
-                bestScore = score
-                bestName = candidate
-                fromFolder = false
+            if let current = bestCandidate, combined == max(current.bigram, current.keyScore) {
+                if keyScore <= current.keyScore { return }
             }
+
+            bestCandidate = (candidate, bigramScore, keyScore, fromFolder)
         }
 
-        for candidate in existingFolders where !korrespondenten.contains(where: { $0.caseInsensitiveCompare(candidate) == .orderedSame }) {
-            let score = CorrespondentNormalizer.similarity(between: trimmed, and: candidate)
-            if score > bestScore {
-                bestScore = score
-                bestName = candidate
-                fromFolder = true
-            }
-        }
+        canonicalCandidates.forEach { considerCandidate($0, fromFolder: true) }
+        additionalCandidates.forEach { considerCandidate($0, fromFolder: false) }
 
-        if let name = bestName, bestScore >= 0.82 {
-            registerKorrespondent(name)
-            korrespondentAliases[key] = name
-            save()
-            if fromFolder {
-                return KorrespondentResolution(canonical: name, displayName: name, decision: .folderMapped(to: name, score: bestScore))
-            } else {
-                return KorrespondentResolution(canonical: name, displayName: name, decision: .fuzzyMapped(to: name, score: bestScore))
+        if let best = bestCandidate {
+            let combinedScore = max(best.bigram, best.keyScore)
+            if best.bigram >= 0.82 || best.keyScore >= 0.9 {
+                registerKorrespondent(best.name)
+                korrespondentAliases[key] = best.name
+                save()
+                if best.fromFolder {
+                    return KorrespondentResolution(
+                        canonical: best.name,
+                        displayName: best.name,
+                        decision: .folderMapped(to: best.name, score: combinedScore)
+                    )
+                } else {
+                    return KorrespondentResolution(
+                        canonical: best.name,
+                        displayName: best.name,
+                        decision: .fuzzyMapped(to: best.name, score: combinedScore)
+                    )
+                }
             }
         }
 
