@@ -7,6 +7,7 @@
 
 import SwiftUI
 import PDFKit
+import Combine
 
 // Identifiable-Wrapper für .sheet(item:)
 private struct ConflictBox: Identifiable {
@@ -39,6 +40,37 @@ struct MetadataEditorView: View {
     // Statusbanner + Infos zur letzten Analyse
     @State private var statusText: String? = nil
     @State private var lastSuggestion: Suggestion? = nil
+    @State private var existingCorrespondentFolders: [String] = []
+    @State private var korResolutionMessage: ResolutionBanner? = nil
+    @State private var isApplyingKorrespondent = false
+
+    private struct ResolutionBanner: Identifiable {
+        enum Style {
+            case success
+            case info
+            case warning
+
+            var color: Color {
+                switch self {
+                case .success: return .green
+                case .info: return .blue
+                case .warning: return .orange
+                }
+            }
+
+            var icon: String {
+                switch self {
+                case .success: return "checkmark.circle"
+                case .info: return "info.circle"
+                case .warning: return "exclamationmark.triangle"
+                }
+            }
+        }
+
+        let id = UUID()
+        let text: String
+        let style: Style
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -71,8 +103,14 @@ struct MetadataEditorView: View {
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: korInput) { _, _ in persistInputsToCatalog() }
 
+                        if let banner = korResolutionMessage {
+                            Label(banner.text, systemImage: banner.style.icon)
+                                .font(.caption)
+                                .foregroundStyle(banner.style.color)
+                        }
+
                         if showKorSuggestions {
-                            let sugg = catalog.suggestions(for: korInput, in: .korrespondent)
+                            let sugg = combinedKorrespondentSuggestions()
                             if !sugg.isEmpty {
                                 List(sugg, id: \.self) { s in
                                     Button(s) { korInput = s; showKorSuggestions = false }
@@ -181,11 +219,13 @@ struct MetadataEditorView: View {
         // Wichtig: Auch bei erneutem Anzeigen des Fensters neu laden (nicht nur bei Item-Wechsel)
         .onAppear {
             resetViewState()
+            refreshExistingCorrespondentsFromArchive()
             Task { await loadFromCacheOrAnalyze() }
         }
         // UND bei Item-Wechsel
         .task(id: item.fileURL) {
             resetViewState()
+            refreshExistingCorrespondentsFromArchive()
             await loadFromCacheOrAnalyze()
         }
         .navigationTitle(item.fileName)
@@ -200,6 +240,9 @@ struct MetadataEditorView: View {
                 guard let choice = choice else { return }
                 doPlaceInternal(base: base, conflictPolicy: choice)
             }
+        }
+        .onReceive(settings.$archiveBaseURL) { _ in
+            refreshExistingCorrespondentsFromArchive()
         }
         .onReceive(NotificationCenter.default.publisher(for: .analysisDidFinish)) { note in
             guard let url = note.object as? URL else { return }
@@ -221,6 +264,7 @@ struct MetadataEditorView: View {
         running = false
         statusText = nil
         lastSuggestion = nil
+        korResolutionMessage = nil
         // Felder nur leeren, wenn wir NICHT bereits Daten haben,
         // damit ein sichtbarer „Blink“ vermieden wird.
         if korInput.isEmpty && typInput.isEmpty {
@@ -348,9 +392,19 @@ struct MetadataEditorView: View {
     // MARK: Ablage
 
     private func persistInputsToCatalog() {
+        if !isApplyingKorrespondent {
+            isApplyingKorrespondent = true
+            let resolution = catalog.resolveKorrespondent(korInput, existingFolders: existingCorrespondentFolders)
+            meta.korrespondent = resolution.canonical
+            if !resolution.displayName.isEmpty && resolution.displayName != korInput {
+                korInput = resolution.displayName
+            }
+            korResolutionMessage = banner(for: resolution)
+            isApplyingKorrespondent = false
+        }
+
         meta.korrespondent = korInput.trimmingCharacters(in: .whitespacesAndNewlines)
         meta.dokumenttyp = typInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !meta.korrespondent.isEmpty { catalog.addKorrespondent(meta.korrespondent) }
         if !meta.dokumenttyp.isEmpty { catalog.addDokumenttyp(meta.dokumenttyp) }
     }
 
@@ -385,6 +439,7 @@ struct MetadataEditorView: View {
 
             // Erfolg als Banner (auto-hide), kein Alert
             statusText = "Ablage erfolgreich: \(result.finalURL.lastPathComponent)"
+            refreshExistingCorrespondentsFromArchive()
 
         } catch let err as FileOpsError {
             switch err {
@@ -434,6 +489,82 @@ struct MetadataEditorView: View {
         if !allowSpaces { out = out.replacingOccurrences(of: " ", with: "_") }
         out = out.trimmingCharacters(in: .whitespacesAndNewlines)
         return out.isEmpty ? "Unbenannt" : out
+    }
+
+    private func combinedKorrespondentSuggestions(limit: Int = 8) -> [String] {
+        var suggestions = catalog.suggestions(for: korInput, in: .korrespondent, limit: limit)
+        let lowerNeedle = korInput.lowercased()
+        let trimmedNeedle = lowerNeedle.trimmingCharacters(in: .whitespaces)
+
+        func alreadyContained(_ candidate: String) -> Bool {
+            suggestions.contains { $0.caseInsensitiveCompare(candidate) == .orderedSame }
+        }
+
+        guard suggestions.count < limit else { return suggestions }
+
+        let extras: [String]
+        if trimmedNeedle.isEmpty {
+            extras = existingCorrespondentFolders
+        } else {
+            let prefixMatches = existingCorrespondentFolders.filter { $0.lowercased().hasPrefix(trimmedNeedle) }
+            let restMatches = existingCorrespondentFolders.filter {
+                let lower = $0.lowercased()
+                return lower.contains(trimmedNeedle) && !lower.hasPrefix(trimmedNeedle)
+            }
+            extras = prefixMatches + restMatches
+        }
+
+        for candidate in extras {
+            guard !alreadyContained(candidate) else { continue }
+            suggestions.append(candidate)
+            if suggestions.count >= limit { break }
+        }
+
+        return Array(suggestions.prefix(limit))
+    }
+
+    private func refreshExistingCorrespondentsFromArchive() {
+        guard let base = settings.archiveBaseURL else {
+            existingCorrespondentFolders = []
+            korResolutionMessage = nil
+            return
+        }
+        let baseURL = base
+        DispatchQueue.global(qos: .userInitiated).async {
+            let fm = FileManager.default
+            let urls = (try? fm.contentsOfDirectory(at: baseURL,
+                                                    includingPropertiesForKeys: [.isDirectoryKey],
+                                                    options: [.skipsHiddenFiles])) ?? []
+            let names = urls.compactMap { url -> String? in
+                guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey]), values.isDirectory == true else {
+                    return nil
+                }
+                return url.lastPathComponent
+            }.sorted()
+            DispatchQueue.main.async {
+                existingCorrespondentFolders = names
+                persistInputsToCatalog()
+            }
+        }
+    }
+
+    private func banner(for resolution: CatalogStore.KorrespondentResolution) -> ResolutionBanner? {
+        switch resolution.decision {
+        case .empty, .partial:
+            return nil
+        case .newCanonical:
+            return ResolutionBanner(text: "Neuer Korrespondent wird angelegt", style: .info)
+        case .existingCanonical(let name):
+            return ResolutionBanner(text: "Bestehender Eintrag \(name) wird verwendet", style: .success)
+        case .aliasMapped(let target):
+            return ResolutionBanner(text: "Alias erkannt – zugeordnet zu \(target)", style: .success)
+        case .fuzzyMapped(let target, let score):
+            let percent = Int((score * 100).rounded())
+            return ResolutionBanner(text: "Ähnlicher Treffer \(target) übernommen (\(percent)% Übereinstimmung)", style: .warning)
+        case .folderMapped(let target, let score):
+            let percent = Int((score * 100).rounded())
+            return ResolutionBanner(text: "Bestehender Ordner \(target) vorgeschlagen (\(percent)% Übereinstimmung)", style: .warning)
+        }
     }
 
     private func formatDate(_ d: Date) -> String {
