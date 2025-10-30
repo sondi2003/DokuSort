@@ -49,6 +49,16 @@ struct CorrespondentNormalizer {
         return Double(2 * intersection) / Double(total)
     }
 
+    static func normalizedKeySimilarity(between lhs: String, and rhs: String) -> Double {
+        let left = normalizedKey(for: lhs)
+        let right = normalizedKey(for: rhs)
+        return normalizedKeySimilarity(forNormalized: left, andNormalized: right)
+    }
+
+    static func normalizedKeySimilarity(betweenNormalized lhs: String, andNormalized rhs: String) -> Double {
+        return normalizedKeySimilarity(forNormalized: lhs, andNormalized: rhs)
+    }
+
     private static func normalizeForSimilarity(_ value: String) -> String {
         let folded = fold(value)
         let stripped = stripLegalSuffixes(from: folded)
@@ -92,5 +102,32 @@ struct CorrespondentNormalizer {
             dict[gram, default: 0] += 1
         }
         return dict
+    }
+
+    private static func normalizedKeySimilarity(forNormalized lhs: String, andNormalized rhs: String) -> Double {
+        if lhs == rhs { return 1 }
+        if lhs.isEmpty || rhs.isEmpty { return 0 }
+
+        let left = Array(lhs)
+        let right = Array(rhs)
+
+        var previous: [Int] = Array(0...right.count)
+
+        for (rowIndex, leftChar) in left.enumerated() {
+            var current: [Int] = [rowIndex + 1]
+            for (columnIndex, rightChar) in right.enumerated() {
+                let cost = (leftChar == rightChar) ? 0 : 1
+                let insertion = current[columnIndex] + 1
+                let deletion = previous[columnIndex + 1] + 1
+                let substitution = previous[columnIndex] + cost
+                current.append(min(insertion, deletion, substitution))
+            }
+            previous = current
+        }
+
+        guard let distance = previous.last else { return 0 }
+        let maxLength = max(left.count, right.count)
+        if maxLength == 0 { return 1 }
+        return 1.0 - (Double(distance) / Double(maxLength))
     }
 }
