@@ -32,10 +32,8 @@ struct MetadataEditorView: View {
 
     @State private var running = false
     @State private var alertMsg: String?
-    @ObservedObject private var undoStore = UndoStore.shared
 
     @State private var conflictBox: ConflictBox? = nil
-    @State private var pendingNextAfter = false
 
     // Statusbanner + Infos zur letzten Analyse
     @State private var statusText: String? = nil
@@ -51,6 +49,7 @@ struct MetadataEditorView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
+                    // Navigation
                     HStack(spacing: 12) {
                         Button { onPrev?() } label: { Label("Vorheriges", systemImage: "chevron.left") }
                             .disabled(onPrev == nil || running)
@@ -69,6 +68,7 @@ struct MetadataEditorView: View {
                             showKorSuggestions = editing
                         })
                         .textFieldStyle(.roundedBorder)
+                        .onChange(of: korInput) { _, _ in persistInputsToCatalog() }
 
                         if showKorSuggestions {
                             let sugg = catalog.suggestions(for: korInput, in: .korrespondent)
@@ -89,6 +89,7 @@ struct MetadataEditorView: View {
                             showTypSuggestions = editing
                         })
                         .textFieldStyle(.roundedBorder)
+                        .onChange(of: typInput) { _, _ in persistInputsToCatalog() }
 
                         if showTypSuggestions {
                             let sugg = catalog.suggestions(for: typInput, in: .dokumenttyp)
@@ -148,31 +149,14 @@ struct MetadataEditorView: View {
 
                     Spacer()
 
+                    // Aktionen (bereinigt)
                     HStack {
-                        Button { persistInputsToCatalog() } label: { Label("Angaben übernehmen", systemImage: "checkmark.circle") }
-                            .disabled(running)
-
                         Spacer()
-
-                        Button { doPlace(nextAfter: false) } label: {
+                        Button { doPlace() } label: {
                             running ? AnyView(ProgressView().controlSize(.small))
                                     : AnyView(Label("Ablage ausführen", systemImage: "externaldrive.badge.checkmark"))
                         }
                         .disabled(running || settings.archiveBaseURL == nil)
-
-                        Button { doPlace(nextAfter: true) } label: {
-                            running ? AnyView(ProgressView().controlSize(.small))
-                                    : AnyView(Label("Ablage & Nächstes", systemImage: "arrow.right.circle"))
-                        }
-                        .disabled(running || settings.archiveBaseURL == nil)
-                    }
-
-                    HStack {
-                        if undoStore.lastAction != nil {
-                            Button { doUndo() } label: { Label("Rückgängig", systemImage: "arrow.uturn.backward") }
-                                .disabled(running)
-                        }
-                        Spacer()
                     }
                 }
                 .padding()
@@ -193,10 +177,12 @@ struct MetadataEditorView: View {
             }
         }
         .onAppear {
+            // Felder für frischen Start leeren
             korInput = ""
             typInput = ""
             meta = .empty()
         }
+        // Automatische Analyse bei neuem Item
         .task(id: item.fileURL) {
             await runAutoSuggestionAndApply()
         }
@@ -209,7 +195,7 @@ struct MetadataEditorView: View {
                 conflictBox = nil
                 guard let base = settings.archiveBaseURL else { return }
                 guard let choice = choice else { return }
-                doPlaceInternal(base: base, conflictPolicy: choice, nextAfter: pendingNextAfter)
+                doPlaceInternal(base: base, conflictPolicy: choice)
             }
         }
     }
@@ -306,10 +292,11 @@ struct MetadataEditorView: View {
         if let d = s.datum { meta.datum = d }
         if let k = s.korrespondent { korInput = k }
         if let t = s.dokumenttyp { typInput = t }
+        // Sofort in Katalog mitschreiben (lernt schneller)
         persistInputsToCatalog()
     }
 
-    // MARK: Ablage / Undo
+    // MARK: Ablage
 
     private func persistInputsToCatalog() {
         meta.korrespondent = korInput.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -318,14 +305,17 @@ struct MetadataEditorView: View {
         if !meta.dokumenttyp.isEmpty { catalog.addDokumenttyp(meta.dokumenttyp) }
     }
 
-    private func doPlace(nextAfter: Bool) {
-        guard let base = settings.archiveBaseURL else { alertMsg = "Bitte zuerst den Archiv-Basisordner wählen."; return }
+    private func doPlace() {
+        guard let base = settings.archiveBaseURL else {
+            alertMsg = "Bitte zuerst den Archiv-Basisordner wählen."
+            return
+        }
+        // vor der Ablage sicher mitschreiben
         persistInputsToCatalog()
-        pendingNextAfter = nextAfter
-        doPlaceInternal(base: base, conflictPolicy: settings.conflictPolicy, nextAfter: nextAfter)
+        doPlaceInternal(base: base, conflictPolicy: settings.conflictPolicy)
     }
 
-    private func doPlaceInternal(base: URL, conflictPolicy: ConflictPolicy, nextAfter: Bool) {
+    private func doPlaceInternal(base: URL, conflictPolicy: ConflictPolicy) {
         running = true
         statusText = "Ablage läuft …"
         defer {
@@ -338,14 +328,14 @@ struct MetadataEditorView: View {
                                            archiveBaseURL: base,
                                            mode: settings.currentPlaceMode(),
                                            conflictPolicy: conflictPolicy)
-            UndoStore.shared.registerMove(from: result.sourceURL, to: result.finalURL)
+
+            // Liste aktualisieren
             store.scanSourceFolder(settings.sourceBaseURL)
             alertMsg = "Ablage erfolgreich: \(result.finalURL.lastPathComponent)"
 
             // → Persistenz bereinigen (JSON-Eintrag weg)
             NotificationCenter.default.post(name: .documentDidArchive, object: item.fileURL)
 
-            if nextAfter { onNext?() }
         } catch let err as FileOpsError {
             switch err {
             case .nameConflict(let url):
@@ -355,16 +345,6 @@ struct MetadataEditorView: View {
             }
         } catch {
             alertMsg = error.localizedDescription
-        }
-    }
-
-    private func doUndo() {
-        do {
-            try UndoStore.shared.undoLastMove()
-            store.scanSourceFolder(settings.sourceBaseURL)
-            alertMsg = "Letzte Ablage wurde rückgängig gemacht."
-        } catch {
-            alertMsg = "Rückgängig fehlgeschlagen: \(error.localizedDescription)"
         }
     }
 
