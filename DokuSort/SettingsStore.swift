@@ -65,9 +65,10 @@ final class SettingsStore: ObservableObject {
         panel.prompt = "Quelle wählen"
         panel.message = "Wähle den Quellordner, aus dem PDFs geladen werden."
         if panel.runModal() == .OK, let url = panel.url {
+            let normalized = url.normalizedFileURL
             saveBookmark(for: url, key: sourceBookmarkKey)
             _ = url.startAccessingSecurityScopedResource()
-            sourceBaseURL = url
+            sourceBaseURL = normalized
         }
     }
 
@@ -79,9 +80,10 @@ final class SettingsStore: ObservableObject {
         panel.prompt = "Ziel wählen"
         panel.message = "Wähle den Basisordner für die Ablage."
         if panel.runModal() == .OK, let url = panel.url {
+            let normalized = url.normalizedFileURL
             saveBookmark(for: url, key: archiveBookmarkKey)
             _ = url.startAccessingSecurityScopedResource()
-            archiveBaseURL = url
+            archiveBaseURL = normalized
         }
     }
 
@@ -109,7 +111,7 @@ final class SettingsStore: ObservableObject {
                                   bookmarkDataIsStale: &isStale)
                 if isStale { saveBookmark(for: url, key: key) }
                 _ = url.startAccessingSecurityScopedResource()
-                return url
+                return url.normalizedFileURL
             } catch {
                 print("Bookmark wiederherstellen fehlgeschlagen (\(key)): \(error)")
                 return nil

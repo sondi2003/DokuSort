@@ -11,6 +11,26 @@ enum ConflictStrategy {
     case autoSuffix
 }
 
+extension URL {
+    /// Returns a version of the URL that is safe to persist across app launches.
+    ///
+    /// - Normalizes relative components (`..`, `.`) and resolves symlinks/alias
+    ///   segments so that file-reference URLs like `/.file/id=…` collapse to
+    ///   their canonical filesystem location.
+    /// - Ensures the result is absolute.
+    var normalizedFileURL: URL {
+        guard isFileURL else { return absoluteURL }
+        let standardized = standardizedFileURL
+        let resolved = standardized.resolvingSymlinksInPath()
+        return resolved.absoluteURL
+    }
+
+    /// Convenience accessor for the normalized path string.
+    var normalizedFilePath: String {
+        normalizedFileURL.path
+    }
+}
+
 enum ConflictPolicy: String, Codable, CaseIterable {
     case ask
     case autoSuffix

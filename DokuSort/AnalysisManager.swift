@@ -19,7 +19,7 @@ final class AnalysisManager: ObservableObject {
     let objectWillChange = ObservableObjectPublisher()
 
     private let persistence = PersistedStateStore.shared
-    /// In-Memory-Cache (Key = fileURL.path)
+    /// In-Memory-Cache (Key = normalized file path)
     private var cache: [String: AnalysisState] = [:]
 
     private var observers: [AnyCancellable] = []
@@ -48,41 +48,45 @@ final class AnalysisManager: ObservableObject {
 
     /// Liefert State aus Cache oder Persistenz (falls gueltig).
     func state(for url: URL) -> AnalysisState? {
-        let key = url.path
+        let canonicalURL = url.normalizedFileURL
+        let key = key(for: canonicalURL)
         if let s = cache[key] {
-            print("✅ [AnalysisManager] Cache-Hit: \(url.lastPathComponent)")
+            print("✅ [AnalysisManager] Cache-Hit: \(canonicalURL.lastPathComponent)")
             return s
         }
-        if let s = persistence.state(for: url), isStateValid(s, for: url) {
+        if let s = persistence.state(for: canonicalURL), isStateValid(s, for: canonicalURL) {
             cache[key] = s
-            print("📦 [AnalysisManager] Persistenz-Hit: \(url.lastPathComponent)")
+            print("📦 [AnalysisManager] Persistenz-Hit: \(canonicalURL.lastPathComponent)")
             return s
         }
-        print("⚠️ [AnalysisManager] Kein State gefunden: \(url.lastPathComponent)")
+        print("⚠️ [AnalysisManager] Kein State gefunden: \(canonicalURL.lastPathComponent)")
         return nil
     }
 
     func isAnalyzed(_ url: URL) -> Bool {
-        if let s = state(for: url) { return s.status == .analyzed }
+        let canonicalURL = url.normalizedFileURL
+        if let s = state(for: canonicalURL) { return s.status == .analyzed }
         return false
     }
 
     // MARK: Public: Mutation API (direkte Aufrufer wie BackgroundAnalyzer)
 
     func markAnalyzed(url: URL, state: AnalysisState) {
-        guard isStateValid(state, for: url) else {
-            print("⚠️ [AnalysisManager] markAnalyzed verworfen (ungueltig): \(url.lastPathComponent)")
+        let canonicalURL = url.normalizedFileURL
+        guard isStateValid(state, for: canonicalURL) else {
+            print("⚠️ [AnalysisManager] markAnalyzed verworfen (ungueltig): \(canonicalURL.lastPathComponent)")
             return
         }
-        let key = url.path
+        let key = key(for: canonicalURL)
         cache[key] = state
-        persistence.upsert(url: url, state: state)
+        persistence.upsert(url: canonicalURL, state: state)
         objectWillChange.send()
-        print("📥 [AnalysisManager] markAnalyzed gespeichert: \(url.lastPathComponent)")
+        print("📥 [AnalysisManager] markAnalyzed gespeichert: \(canonicalURL.lastPathComponent)")
     }
 
     func markFailed(url: URL) {
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let canonicalURL = url.normalizedFileURL
+        let values = try? canonicalURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         let s = AnalysisState(
             status: .failed,
             confidence: 0,
@@ -92,19 +96,20 @@ final class AnalysisManager: ObservableObject {
             fileSize: values?.fileSize.map(Int64.init),
             fileModDate: values?.contentModificationDate
         )
-        let key = url.path
+        let key = key(for: canonicalURL)
         cache[key] = s
-        persistence.upsert(url: url, state: s)
+        persistence.upsert(url: canonicalURL, state: s)
         objectWillChange.send()
-        print("❌ [AnalysisManager] markFailed gespeichert: \(url.lastPathComponent)")
+        print("❌ [AnalysisManager] markFailed gespeichert: \(canonicalURL.lastPathComponent)")
     }
 
     func remove(url: URL) {
-        let key = url.path
+        let canonicalURL = url.normalizedFileURL
+        let key = key(for: canonicalURL)
         cache.removeValue(forKey: key)
-        persistence.remove(url: url)
+        persistence.remove(url: canonicalURL)
         objectWillChange.send()
-        print("🧹 [AnalysisManager] remove: \(url.lastPathComponent)")
+        print("🧹 [AnalysisManager] remove: \(canonicalURL.lastPathComponent)")
     }
 
     func reset() {
@@ -126,7 +131,8 @@ final class AnalysisManager: ObservableObject {
                     self.markAnalyzed(url: url, state: s)
                 } else {
                     // Falls kein State mitkommt: minimaler State aus Dateifacts (failsafe)
-                    let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                    let canonicalURL = url.normalizedFileURL
+                    let values = try? canonicalURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
                     let s = AnalysisState(
                         status: .analyzed,
                         confidence: 0,
@@ -136,7 +142,7 @@ final class AnalysisManager: ObservableObject {
                         fileSize: values?.fileSize.map(Int64.init),
                         fileModDate: values?.contentModificationDate
                     )
-                    self.markAnalyzed(url: url, state: s)
+                    self.markAnalyzed(url: canonicalURL, state: s)
                 }
             }
             .store(in: &observers)
@@ -154,13 +160,18 @@ final class AnalysisManager: ObservableObject {
     /// Prueft, ob gespeicherte Facts (Groesse + mtime) noch zur aktuellen Datei passen.
     private func isStateValid(_ s: AnalysisState, for url: URL) -> Bool {
         guard let sizeSaved = s.fileSize, let modSaved = s.fileModDate else { return true }
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let canonicalURL = url.normalizedFileURL
+        let values = try? canonicalURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         let sizeNow = values?.fileSize.map(Int64.init)
         let modNow  = values?.contentModificationDate
         let ok = (sizeSaved == sizeNow && modSaved == modNow)
         if !ok {
-            print("⚠️ [AnalysisManager] State ungueltig (Datei geaendert): \(url.lastPathComponent)")
+            print("⚠️ [AnalysisManager] State ungueltig (Datei geaendert): \(canonicalURL.lastPathComponent)")
         }
         return ok
+    }
+
+    private func key(for url: URL) -> String {
+        url.normalizedFilePath
     }
 }

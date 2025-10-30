@@ -12,7 +12,7 @@ final class PersistedStateStore {
     static let shared = PersistedStateStore()
 
     private let queue = DispatchQueue(label: "DokuSort.PersistedStateStore", qos: .utility)
-    private var states: [String: AnalysisState] = [:] // Key = fileURL.path
+    private var states: [String: AnalysisState] = [:] // Key = normalized file path
 
     private var fileURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -31,7 +31,16 @@ final class PersistedStateStore {
             do {
                 let data = try Data(contentsOf: fileURL)
                 let decoded = try JSONDecoder().decode([String: AnalysisState].self, from: data)
-                states = decoded
+                var normalized: [String: AnalysisState] = [:]
+                normalized.reserveCapacity(decoded.count)
+                var changed = false
+                for (rawKey, value) in decoded {
+                    let normalizedKey = URL(fileURLWithPath: rawKey).normalizedFilePath
+                    if normalizedKey != rawKey { changed = true }
+                    normalized[normalizedKey] = value
+                }
+                states = normalized
+                if changed { saveToDisk() }
             } catch {
                 // Wenn defekt: neu beginnen
                 states = [:]
@@ -53,19 +62,19 @@ final class PersistedStateStore {
     // MARK: Get/Set
 
     func state(for url: URL) -> AnalysisState? {
-        queue.sync { states[url.path] }
+        queue.sync { states[key(for: url)] }
     }
 
     func upsert(url: URL, state: AnalysisState) {
         queue.sync {
-            states[url.path] = state
+            states[key(for: url)] = state
         }
         saveToDisk()
     }
 
     func remove(url: URL) {
         queue.sync {
-            states.removeValue(forKey: url.path)
+            states.removeValue(forKey: key(for: url))
         }
         saveToDisk()
     }
@@ -79,5 +88,9 @@ final class PersistedStateStore {
             }
         }
         saveToDisk()
+    }
+
+    private func key(for url: URL) -> String {
+        url.normalizedFilePath
     }
 }

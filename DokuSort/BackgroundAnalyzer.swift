@@ -49,8 +49,9 @@ final class BackgroundAnalyzer: ObservableObject {
         NotificationCenter.default.publisher(for: .analysisDidFinish)
             .sink { [weak self] note in
                 guard let self, let url = note.object as? URL else { return }
-                self.enqueued.remove(url.path)
-                self.queue.removeAll { $0 == url }
+                let normalized = url.normalizedFileURL
+                self.enqueued.remove(normalized.path)
+                self.queue.removeAll { $0 == normalized }
             }
             .store(in: &observers)
 
@@ -58,8 +59,9 @@ final class BackgroundAnalyzer: ObservableObject {
         NotificationCenter.default.publisher(for: .documentDidArchive)
             .sink { [weak self] note in
                 guard let self, let url = note.object as? URL else { return }
-                self.enqueued.remove(url.path)
-                self.queue.removeAll { $0 == url }
+                let normalized = url.normalizedFileURL
+                self.enqueued.remove(normalized.path)
+                self.queue.removeAll { $0 == normalized }
             }
             .store(in: &observers)
 
@@ -83,23 +85,25 @@ final class BackgroundAnalyzer: ObservableObject {
     private func enqueueAllPendingFromStore() {
         guard let store, let analysis else { return }
         for item in store.items {
-            let path = item.fileURL.path
+            let normalizedURL = item.fileURL.normalizedFileURL
+            let path = normalizedURL.path
             // Bereits abgelegt/analysiert? → ueberspringen
-            if analysis.isAnalyzed(item.fileURL) { continue }
+            if analysis.isAnalyzed(normalizedURL) { continue }
             // Bereits in der Queue? → ueberspringen
             if enqueued.contains(path) { continue }
             // Einreihen
             enqueued.insert(path)
-            queue.append(item.fileURL)
+            queue.append(normalizedURL)
         }
     }
 
     /// Ein einzelnes URL einreihen (z. B. aus Watcher-Ereignis in Zukunft)
     private func enqueue(_ url: URL) {
-        let path = url.path
+        let normalizedURL = url.normalizedFileURL
+        let path = normalizedURL.path
         if enqueued.contains(path) { return }
         enqueued.insert(path)
-        queue.append(url)
+        queue.append(normalizedURL)
     }
 
     // MARK: Worker
