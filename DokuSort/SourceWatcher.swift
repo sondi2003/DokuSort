@@ -24,8 +24,8 @@ final class SourceWatcher: ObservableObject {
     /// Startet das Watching für den angegebenen Ordner.
     func startWatching(url: URL?) {
         stopWatching()
-        guard let url = url else { return }
-        let path = url.path
+        guard let url = url?.normalizedFileURL else { return }
+        let path = url.normalizedFilePath
 
         // FSEvents-Callback (Background-Queue)
         let callback: FSEventStreamCallback = { (_, clientCallBackInfo, _, _, _, _) in

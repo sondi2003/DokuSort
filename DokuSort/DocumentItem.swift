@@ -16,8 +16,9 @@ struct DocumentItem: Identifiable, Hashable {
 
     init(url: URL, fileSize: Int64?) {
         self.id = UUID()
-        self.fileName = url.lastPathComponent
-        self.fileURL = url
+        let normalizedURL = url.normalizedFileURL
+        self.fileName = normalizedURL.lastPathComponent
+        self.fileURL = normalizedURL
         self.fileSize = fileSize
         self.addedAt = Date()
     }

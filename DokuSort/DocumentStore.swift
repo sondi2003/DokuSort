@@ -38,7 +38,7 @@ final class DocumentStore: ObservableObject {
 
     // NEU: Quelle scannen (alle PDFs im Quellordner, Ebene 1)
     func scanSourceFolder(_ source: URL?) {
-        guard let source = source else { self.items = []; return }
+        guard let source = source?.normalizedFileURL else { self.items = []; return }
         var tmp: [DocumentItem] = []
         if let enumerator = FileManager.default.enumerator(
             at: source,
