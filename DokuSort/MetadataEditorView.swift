@@ -201,6 +201,17 @@ struct MetadataEditorView: View {
                 doPlaceInternal(base: base, conflictPolicy: choice)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .analysisDidFinish)) { note in
+            guard let url = note.object as? URL else { return }
+            let target = url.normalizedFileURL
+            guard target == item.fileURL.normalizedFileURL else { return }
+
+            if let s = note.userInfo?["state"] as? AnalysisState {
+                applyState(s)
+            } else if let cached = analysis.state(for: target) {
+                applyState(cached)
+            }
+        }
     }
 
     // MARK: Reset
