@@ -178,14 +178,14 @@ struct MetadataEditorView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        // Wichtig: Auch bei erneutem Anzeigen des Fensters neu laden (nicht nur bei Item-Wechsel)
         .onAppear {
-            // Felder für frischen Start leeren
-            korInput = ""
-            typInput = ""
-            meta = .empty()
+            resetViewState()
+            Task { await loadFromCacheOrAnalyze() }
         }
-        // Entscheidung: Cache übernehmen ODER analysieren
+        // UND bei Item-Wechsel
         .task(id: item.fileURL) {
+            resetViewState()
             await loadFromCacheOrAnalyze()
         }
         .navigationTitle(item.fileName)
@@ -203,14 +203,32 @@ struct MetadataEditorView: View {
         }
     }
 
+    // MARK: Reset
+
+    private func resetViewState() {
+        // Alles auf neutral setzen, damit keine Reste durchsickern
+        running = false
+        statusText = nil
+        lastSuggestion = nil
+        // Felder nur leeren, wenn wir NICHT bereits Daten haben,
+        // damit ein sichtbarer „Blink“ vermieden wird.
+        if korInput.isEmpty && typInput.isEmpty {
+            meta = .empty()
+        }
+        // Debug
+        print("↻ [Editor] Reset für:", item.fileURL.lastPathComponent)
+    }
+
     // MARK: Cache-or-Analyze
 
     private func loadFromCacheOrAnalyze() async {
         if let st = analysis.state(for: item.fileURL) {
+            print("✅ [Editor] Übernehme Cache für:", item.fileURL.lastPathComponent)
             applyState(st)
             showTransientStatus("Ergebnis aus Cache übernommen", seconds: 1.0)
             return
         }
+        print("🔎 [Editor] Kein Cache – starte Analyse für:", item.fileURL.lastPathComponent)
         await runAutoSuggestionAndApply()
     }
 
@@ -339,7 +357,7 @@ struct MetadataEditorView: View {
         statusText = "Ablage läuft …"
         defer {
             running = false
-            autoHideStatus(after: 2.0) // << Erfolg verschwindet automatisch nach 2s
+            autoHideStatus(after: 2.0) // Erfolg verschwindet automatisch nach 2s
         }
         do {
             let result = try FileOps.place(item: item,
@@ -354,7 +372,7 @@ struct MetadataEditorView: View {
             // → Persistenz bereinigen (JSON-Eintrag weg)
             NotificationCenter.default.post(name: .documentDidArchive, object: item.fileURL)
 
-            // Erfolg NICHT als Alert – nur als Banner
+            // Erfolg als Banner (auto-hide), kein Alert
             statusText = "Ablage erfolgreich: \(result.finalURL.lastPathComponent)"
 
         } catch let err as FileOpsError {
