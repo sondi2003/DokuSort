@@ -23,6 +23,7 @@ struct MetadataEditorView: View {
     @EnvironmentObject private var catalog: CatalogStore
     @EnvironmentObject private var settings: SettingsStore
     @EnvironmentObject private var store: DocumentStore
+    @EnvironmentObject private var analysis: AnalysisManager   // Cache/States
 
     @State private var meta = DocumentMetadata.empty()
     @State private var korInput: String = ""
@@ -31,7 +32,7 @@ struct MetadataEditorView: View {
     @State private var showTypSuggestions = false
 
     @State private var running = false
-    @State private var alertMsg: String?
+    @State private var alertMsg: String?            // nur fuer Fehler
 
     @State private var conflictBox: ConflictBox? = nil
 
@@ -149,7 +150,7 @@ struct MetadataEditorView: View {
 
                     Spacer()
 
-                    // Aktionen (bereinigt)
+                    // Aktionen (schlank)
                     HStack {
                         Spacer()
                         Button { doPlace() } label: {
@@ -163,7 +164,7 @@ struct MetadataEditorView: View {
                 .frame(minWidth: 520)
             }
 
-            // STATUSBANNER
+            // STATUSBANNER (auto-hide)
             if let text = statusText {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -174,6 +175,7 @@ struct MetadataEditorView: View {
                 .background(.ultraThickMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(.secondary.opacity(0.4), lineWidth: 0.5))
                 .padding(.top, 8)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .onAppear {
@@ -182,11 +184,12 @@ struct MetadataEditorView: View {
             typInput = ""
             meta = .empty()
         }
-        // Automatische Analyse bei neuem Item
+        // Entscheidung: Cache übernehmen ODER analysieren
         .task(id: item.fileURL) {
-            await runAutoSuggestionAndApply()
+            await loadFromCacheOrAnalyze()
         }
         .navigationTitle(item.fileName)
+        // Alerts nur noch für Fehlerfälle (keine Erfolgs-Popups mehr)
         .alert(item: Binding(get: { alertMsg.map { MsgWrapper(message: $0) } }, set: { _ in alertMsg = nil })) { w in
             Alert(title: Text(w.message))
         }
@@ -200,6 +203,25 @@ struct MetadataEditorView: View {
         }
     }
 
+    // MARK: Cache-or-Analyze
+
+    private func loadFromCacheOrAnalyze() async {
+        if let st = analysis.state(for: item.fileURL) {
+            applyState(st)
+            showTransientStatus("Ergebnis aus Cache übernommen", seconds: 1.0)
+            return
+        }
+        await runAutoSuggestionAndApply()
+    }
+
+    private func applyState(_ s: AnalysisState) {
+        if let d = s.datum { meta.datum = d }
+        if let k = s.korrespondent { korInput = k }
+        if let t = s.dokumenttyp { typInput = t }
+        lastSuggestion = Suggestion(datum: s.datum, korrespondent: s.korrespondent, dokumenttyp: s.dokumenttyp)
+        persistInputsToCatalog()
+    }
+
     // MARK: Analyse (Ollama → OCR-Fallback) + Publish
 
     private func runAutoSuggestionAndApply() async {
@@ -208,7 +230,7 @@ struct MetadataEditorView: View {
         statusText = "Analysiere mit KI, bitte warten …"
         defer {
             running = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { statusText = nil }
+            autoHideStatus(after: 0.6)
         }
 
         do {
@@ -253,7 +275,6 @@ struct MetadataEditorView: View {
         } catch {
             alertMsg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             statusText = "Analyse fehlgeschlagen"
-            NotificationCenter.default.post(name: .analysisDidFail, object: item.fileURL)
         }
     }
 
@@ -292,7 +313,6 @@ struct MetadataEditorView: View {
         if let d = s.datum { meta.datum = d }
         if let k = s.korrespondent { korInput = k }
         if let t = s.dokumenttyp { typInput = t }
-        // Sofort in Katalog mitschreiben (lernt schneller)
         persistInputsToCatalog()
     }
 
@@ -310,7 +330,6 @@ struct MetadataEditorView: View {
             alertMsg = "Bitte zuerst den Archiv-Basisordner wählen."
             return
         }
-        // vor der Ablage sicher mitschreiben
         persistInputsToCatalog()
         doPlaceInternal(base: base, conflictPolicy: settings.conflictPolicy)
     }
@@ -320,7 +339,7 @@ struct MetadataEditorView: View {
         statusText = "Ablage läuft …"
         defer {
             running = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { statusText = nil }
+            autoHideStatus(after: 2.0) // << Erfolg verschwindet automatisch nach 2s
         }
         do {
             let result = try FileOps.place(item: item,
@@ -331,10 +350,12 @@ struct MetadataEditorView: View {
 
             // Liste aktualisieren
             store.scanSourceFolder(settings.sourceBaseURL)
-            alertMsg = "Ablage erfolgreich: \(result.finalURL.lastPathComponent)"
 
             // → Persistenz bereinigen (JSON-Eintrag weg)
             NotificationCenter.default.post(name: .documentDidArchive, object: item.fileURL)
+
+            // Erfolg NICHT als Alert – nur als Banner
+            statusText = "Ablage erfolgreich: \(result.finalURL.lastPathComponent)"
 
         } catch let err as FileOpsError {
             switch err {
@@ -342,9 +363,11 @@ struct MetadataEditorView: View {
                 conflictBox = ConflictBox(url: url)
             default:
                 alertMsg = err.errorDescription ?? "\(err)"
+                statusText = "Ablage fehlgeschlagen"
             }
         } catch {
             alertMsg = error.localizedDescription
+            statusText = "Ablage fehlgeschlagen"
         }
     }
 
@@ -388,6 +411,19 @@ struct MetadataEditorView: View {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         return f.string(from: d)
+    }
+
+    private func showTransientStatus(_ text: String, seconds: Double) {
+        statusText = text
+        autoHideStatus(after: seconds)
+    }
+
+    private func autoHideStatus(after seconds: Double) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+            withAnimation(.easeOut(duration: 0.25)) {
+                statusText = nil
+            }
+        }
     }
 
     private struct MsgWrapper: Identifiable { let id = UUID(); let message: String }

@@ -8,22 +8,33 @@
 import Foundation
 import Combine
 
-/// Verwalten der Analyse-States inkl. Persistenz.
+/// Verwalten der Analyse-States inkl. Persistenz in JSON.
+/// - Hoert auf Notifications aus UI/Background:
+///   - .analysisDidFinish  (userInfo["state"] = AnalysisState)
+///   - .documentDidArchive (loescht Cache-Eintrag)
 @MainActor
 final class AnalysisManager: ObservableObject {
 
-    // Eigener Publisher, da wir manuell `objectWillChange.send()` ausloesen.
+    // Eigenen Publisher verwenden, da wir manuell Aenderungen signalisieren
     let objectWillChange = ObservableObjectPublisher()
 
     private let persistence = PersistedStateStore.shared
-    private var cache: [String: AnalysisState] = [:] // Key = fileURL.path
+    /// In-Memory-Cache (Key = fileURL.path)
+    private var cache: [String: AnalysisState] = [:]
+
+    private var observers: [AnyCancellable] = []
+
+    // MARK: Init
 
     init() {
+        // Persistenz laden und lazy bei Bedarf verwenden
         persistence.loadFromDisk()
-        self.cache = [:]
+        setupObservers()
+        print("📂 [AnalysisManager] init – Persistenz geladen")
     }
 
-    // UI: Zaehler/Progress
+    // MARK: Public: UI-Helfer
+
     var analyzedCount: Int {
         cache.values.filter { $0.status == .analyzed }.count
     }
@@ -33,17 +44,21 @@ final class AnalysisManager: ObservableObject {
         return Double(analyzedCount) / Double(total)
     }
 
-    // MARK: Query
+    // MARK: Public: Query
 
+    /// Liefert State aus Cache oder Persistenz (falls gueltig).
     func state(for url: URL) -> AnalysisState? {
-        if let s = cache[url.path] {
+        let key = url.path
+        if let s = cache[key] {
+            print("✅ [AnalysisManager] Cache-Hit: \(url.lastPathComponent)")
             return s
         }
-        if let s = persistence.state(for: url),
-           isStateValid(s, for: url) {
-            cache[url.path] = s
+        if let s = persistence.state(for: url), isStateValid(s, for: url) {
+            cache[key] = s
+            print("📦 [AnalysisManager] Persistenz-Hit: \(url.lastPathComponent)")
             return s
         }
+        print("⚠️ [AnalysisManager] Kein State gefunden: \(url.lastPathComponent)")
         return nil
     }
 
@@ -52,47 +67,100 @@ final class AnalysisManager: ObservableObject {
         return false
     }
 
-    // MARK: Mutation
+    // MARK: Public: Mutation API (direkte Aufrufer wie BackgroundAnalyzer)
 
     func markAnalyzed(url: URL, state: AnalysisState) {
-        guard isStateValid(state, for: url) else { return }
-        cache[url.path] = state
+        guard isStateValid(state, for: url) else {
+            print("⚠️ [AnalysisManager] markAnalyzed verworfen (ungueltig): \(url.lastPathComponent)")
+            return
+        }
+        let key = url.path
+        cache[key] = state
         persistence.upsert(url: url, state: state)
         objectWillChange.send()
+        print("📥 [AnalysisManager] markAnalyzed gespeichert: \(url.lastPathComponent)")
     }
 
     func markFailed(url: URL) {
-        let s = AnalysisState(status: .failed,
-                              confidence: 0,
-                              korrespondent: nil,
-                              dokumenttyp: nil,
-                              datum: nil,
-                              fileSize: (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init),
-                              fileModDate: (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate))
-        cache[url.path] = s
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let s = AnalysisState(
+            status: .failed,
+            confidence: 0,
+            korrespondent: nil,
+            dokumenttyp: nil,
+            datum: nil,
+            fileSize: values?.fileSize.map(Int64.init),
+            fileModDate: values?.contentModificationDate
+        )
+        let key = url.path
+        cache[key] = s
         persistence.upsert(url: url, state: s)
         objectWillChange.send()
+        print("❌ [AnalysisManager] markFailed gespeichert: \(url.lastPathComponent)")
     }
 
     func remove(url: URL) {
-        cache.removeValue(forKey: url.path)
+        let key = url.path
+        cache.removeValue(forKey: key)
         persistence.remove(url: url)
         objectWillChange.send()
+        print("🧹 [AnalysisManager] remove: \(url.lastPathComponent)")
     }
 
     func reset() {
         cache.removeAll()
         persistence.cleanupMissingFiles()
         objectWillChange.send()
+        print("🔁 [AnalysisManager] reset + cleanupMissingFiles")
+    }
+
+    // MARK: Notifications bridging (wichtig, damit View-Posts in die Persistenz kommen)
+
+    private func setupObservers() {
+        NotificationCenter.default.publisher(for: .analysisDidFinish)
+            .sink { [weak self] note in
+                guard let self else { return }
+                guard let url = note.object as? URL else { return }
+                // bevorzugt den mitgelieferten State verwenden
+                if let s = note.userInfo?["state"] as? AnalysisState {
+                    self.markAnalyzed(url: url, state: s)
+                } else {
+                    // Falls kein State mitkommt: minimaler State aus Dateifacts (failsafe)
+                    let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                    let s = AnalysisState(
+                        status: .analyzed,
+                        confidence: 0,
+                        korrespondent: nil,
+                        dokumenttyp: nil,
+                        datum: nil,
+                        fileSize: values?.fileSize.map(Int64.init),
+                        fileModDate: values?.contentModificationDate
+                    )
+                    self.markAnalyzed(url: url, state: s)
+                }
+            }
+            .store(in: &observers)
+
+        NotificationCenter.default.publisher(for: .documentDidArchive)
+            .sink { [weak self] note in
+                guard let self, let url = note.object as? URL else { return }
+                self.remove(url: url)
+            }
+            .store(in: &observers)
     }
 
     // MARK: Helpers
 
+    /// Prueft, ob gespeicherte Facts (Groesse + mtime) noch zur aktuellen Datei passen.
     private func isStateValid(_ s: AnalysisState, for url: URL) -> Bool {
         guard let sizeSaved = s.fileSize, let modSaved = s.fileModDate else { return true }
         let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         let sizeNow = values?.fileSize.map(Int64.init)
         let modNow  = values?.contentModificationDate
-        return sizeSaved == sizeNow && modSaved == modNow
+        let ok = (sizeSaved == sizeNow && modSaved == modNow)
+        if !ok {
+            print("⚠️ [AnalysisManager] State ungueltig (Datei geaendert): \(url.lastPathComponent)")
+        }
+        return ok
     }
 }
