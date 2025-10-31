@@ -43,6 +43,7 @@ struct MetadataEditorView: View {
     @State private var existingCorrespondentFolders: [String] = []
     @State private var korResolutionMessage: ResolutionBanner? = nil
     @State private var isApplyingKorrespondent = false
+    @State private var isLoadingFromAnalysis = false  // Flag um Auto-Überschreibung zu verhindern
 
     private struct ResolutionBanner: Identifiable {
         enum Style {
@@ -101,7 +102,11 @@ struct MetadataEditorView: View {
                             showKorSuggestions = editing
                         })
                         .textFieldStyle(.roundedBorder)
-                        .onChange(of: korInput) { _, _ in persistInputsToCatalog() }
+                        .onChange(of: korInput) { _, _ in
+                            // Verhindere Überschreibung während Daten geladen werden
+                            guard !isLoadingFromAnalysis else { return }
+                            persistInputsToCatalog()
+                        }
 
                         if let banner = korResolutionMessage {
                             Label(banner.text, systemImage: banner.style.icon)
@@ -265,6 +270,7 @@ struct MetadataEditorView: View {
         statusText = nil
         lastSuggestion = nil
         korResolutionMessage = nil
+        isLoadingFromAnalysis = false
         // Felder nur leeren, wenn wir NICHT bereits Daten haben,
         // damit ein sichtbarer „Blink“ vermieden wird.
         if korInput.isEmpty && typInput.isEmpty {
@@ -288,10 +294,21 @@ struct MetadataEditorView: View {
     }
 
     private func applyState(_ s: AnalysisState) {
+        // Flag setzen damit persistInputsToCatalog nicht sofort überschreibt
+        isLoadingFromAnalysis = true
+        defer {
+            // Nach kurzer Verzögerung Flag zurücksetzen
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isLoadingFromAnalysis = false
+            }
+        }
+
         if let d = s.datum { meta.datum = d }
         if let k = s.korrespondent { korInput = k }
         if let t = s.dokumenttyp { typInput = t }
         lastSuggestion = Suggestion(datum: s.datum, korrespondent: s.korrespondent, dokumenttyp: s.dokumenttyp)
+
+        // Persistiere OHNE automatisches Überschreiben der geladenen Werte
         persistInputsToCatalog()
     }
 
@@ -383,6 +400,14 @@ struct MetadataEditorView: View {
     }
 
     private func applySuggestionOverwriting(_ s: Suggestion) {
+        // Flag setzen damit persistInputsToCatalog nicht sofort überschreibt
+        isLoadingFromAnalysis = true
+        defer {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isLoadingFromAnalysis = false
+            }
+        }
+
         if let d = s.datum { meta.datum = d }
         if let k = s.korrespondent { korInput = k }
         if let t = s.dokumenttyp { typInput = t }
@@ -392,16 +417,35 @@ struct MetadataEditorView: View {
     // MARK: Ablage
 
     private func persistInputsToCatalog() {
-        if !isApplyingKorrespondent {
-            isApplyingKorrespondent = true
-            let resolution = catalog.resolveKorrespondent(korInput, existingFolders: existingCorrespondentFolders)
-            meta.korrespondent = resolution.canonical
-            if !resolution.displayName.isEmpty && resolution.displayName != korInput {
-                korInput = resolution.displayName
-            }
-            korResolutionMessage = banner(for: resolution)
-            isApplyingKorrespondent = false
+        // Verhindere Rekursion
+        guard !isApplyingKorrespondent else { return }
+
+        isApplyingKorrespondent = true
+        defer { isApplyingKorrespondent = false }
+
+        let resolution = catalog.resolveKorrespondent(korInput, existingFolders: existingCorrespondentFolders)
+        meta.korrespondent = resolution.canonical
+
+        // NUR bei exakten/Alias-Matches automatisch überschreiben
+        // NICHT bei Fuzzy-Matches oder während User tippt
+        let shouldAutoApply: Bool
+        switch resolution.decision {
+        case .aliasMapped, .existingCanonical:
+            // Nur bei eindeutigen Matches automatisch übernehmen
+            shouldAutoApply = true
+        case .fuzzyMapped, .folderMapped:
+            // Bei Fuzzy-Matches NICHT automatisch überschreiben
+            // User sieht Banner und kann manuell aus Vorschlägen wählen
+            shouldAutoApply = false
+        case .newCanonical, .partial, .empty:
+            shouldAutoApply = false
         }
+
+        if shouldAutoApply && !resolution.displayName.isEmpty && resolution.displayName != korInput {
+            korInput = resolution.displayName
+        }
+
+        korResolutionMessage = banner(for: resolution)
 
         meta.korrespondent = korInput.trimmingCharacters(in: .whitespacesAndNewlines)
         meta.dokumenttyp = typInput.trimmingCharacters(in: .whitespacesAndNewlines)
