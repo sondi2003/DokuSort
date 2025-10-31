@@ -174,8 +174,8 @@ final class BackgroundAnalyzer: ObservableObject {
         }
 
         // 5) Gescheitert
-        NotificationCenter.default.post(name: .analysisDidFail, object: url)
         analysis.markFailed(url: url)
+        NotificationCenter.default.post(name: .analysisDidFail, object: url)
     }
 
     // MARK: Util
@@ -220,8 +220,7 @@ final class BackgroundAnalyzer: ObservableObject {
             fileModDate: values?.contentModificationDate
         )
 
-        // Persistenz + UI informieren
-        analysis?.markAnalyzed(url: url, state: state)
+        // UI informieren → AnalysisManager wird via Notification speichern
         NotificationCenter.default.post(name: .analysisDidFinish, object: url, userInfo: ["state": state])
     }
 }
