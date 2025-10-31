@@ -33,16 +33,50 @@ final class OllamaClient {
             throw OllamaError.invalidURL
         }
 
-        // Kurzer Prompt: gib JSON zurück
+        // Verbesserter Prompt mit Few-Shot-Learning und klaren Anweisungen
         let prompt = """
-        Extrahiere aus folgendem deutschen Dokumenttext die Felder als kompaktes JSON:
-        - datum (im Format YYYY-MM-DD, falls erkennbar)
-        - korrespondent (Firma/Absender, kurz)
-        - dokumenttyp (z. B. Rechnung, Mahnung, Police, Vertrag, Offerte)
+        Du bist ein Experte für Dokumenten-Analyse. Deine Aufgabe ist es, aus deutschen Dokumenten folgende Informationen zu extrahieren:
 
-        Antworte NUR mit einem JSON-Objekt. Kein Fliesstext, kein Codeblock.
+        1. **datum**: Das Rechnungs-/Dokumentdatum (Format: YYYY-MM-DD). Suche nach dem HAUPTDATUM des Dokuments, nicht nach Fälligkeits- oder Lieferdaten.
 
-        Text:
+        2. **korrespondent**: Der Name der Firma oder Organisation, die das Dokument ausgestellt hat (NICHT der Empfänger).
+           - Bevorzuge die offizielle Firmenbezeichnung (z.B. "Swisscom AG" statt nur "Swisscom")
+           - Ignoriere Abteilungsnamen oder Ansprechpersonen
+           - Maximal 50 Zeichen
+           - Keine Adresszeilen
+
+        3. **dokumenttyp**: Die Art des Dokuments. Wähle aus:
+           - "Rechnung" (für Rechnungen, Invoices)
+           - "Mahnung" (für Zahlungserinnerungen)
+           - "Gutschrift" (für Credits)
+           - "Offerte" (für Angebote, Quotes)
+           - "Police" (für Versicherungspolizzen)
+           - "Vertrag" (für Verträge, Contracts)
+           - "Lieferschein" (für Delivery Notes)
+           - "Dokument" (falls nichts passt)
+
+        **WICHTIG**:
+        - Der Korrespondent ist der ABSENDER/AUSSTELLER, nicht der Empfänger
+        - Bei mehreren möglichen Namen: Wähle den, der am Anfang des Dokuments steht
+        - Wenn unsicher: Bevorzuge kürzere, klarere Namen
+
+        **Beispiele:**
+
+        Beispiel 1 - Rechnung:
+        Input: "Swisscom AG\nHardturmstrasse 3\n8005 Zürich\n\nRechnung Nr. 2024-1234\nDatum: 15.03.2024\n\nAn: Max Mustermann..."
+        Output: {"datum": "2024-03-15", "korrespondent": "Swisscom AG", "dokumenttyp": "Rechnung"}
+
+        Beispiel 2 - Versicherung:
+        Input: "AXA Versicherungen\nGeneraldirektion\n\nVersicherungspolice Nr. 123456\nGültig ab: 01.01.2024..."
+        Output: {"datum": "2024-01-01", "korrespondent": "AXA Versicherungen", "dokumenttyp": "Police"}
+
+        Beispiel 3 - Offerte:
+        Input: "ACME GmbH\nOffertnummer: OFF-2024-089\nDatum: 20.02.2024\n\nSehr geehrter Herr..."
+        Output: {"datum": "2024-02-24", "korrespondent": "ACME GmbH", "dokumenttyp": "Offerte"}
+
+        **Antworte NUR mit dem JSON-Objekt. Keine Erklärungen, kein Fließtext, keine Code-Blöcke.**
+
+        Zu analysierender Text:
         \(text.prefix(4000))
         """
 
