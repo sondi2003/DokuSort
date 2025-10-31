@@ -99,6 +99,10 @@ struct MetadataEditorView: View {
                         Text("Korrespondent")
                         TextField("z. B. Krankenkasse XY", text: $korInput, onEditingChanged: { editing in
                             showKorSuggestions = editing
+                            // Beim Verlassen des Feldes: Korrespondent auflösen
+                            if !editing {
+                                resolveKorrespondentNow()
+                            }
                         })
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: korInput) { _, _ in persistInputsToCatalog() }
@@ -288,11 +292,16 @@ struct MetadataEditorView: View {
     }
 
     private func applyState(_ s: AnalysisState) {
-        if let d = s.datum { meta.datum = d }
-        if let k = s.korrespondent { korInput = k }
-        if let t = s.dokumenttyp { typInput = t }
-        lastSuggestion = Suggestion(datum: s.datum, korrespondent: s.korrespondent, dokumenttyp: s.dokumenttyp)
-        persistInputsToCatalog()
+        // Explizit im Main-Thread ausführen und UI-Updates erzwingen
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if let d = s.datum { self.meta.datum = d }
+            if let k = s.korrespondent { self.korInput = k }
+            if let t = s.dokumenttyp { self.typInput = t }
+            self.lastSuggestion = Suggestion(datum: s.datum, korrespondent: s.korrespondent, dokumenttyp: s.dokumenttyp)
+            // Beim Laden der Analyse: sofort Korrespondent auflösen
+            self.resolveKorrespondentNow()
+        }
     }
 
     // MARK: Analyse (Ollama → OCR-Fallback) + Publish
@@ -391,21 +400,37 @@ struct MetadataEditorView: View {
 
     // MARK: Ablage
 
+    /// Wird während des Tippens aufgerufen - OHNE aggressive Korrespondenten-Auflösung
     private func persistInputsToCatalog() {
-        if !isApplyingKorrespondent {
-            isApplyingKorrespondent = true
-            let resolution = catalog.resolveKorrespondent(korInput, existingFolders: existingCorrespondentFolders)
-            meta.korrespondent = resolution.canonical
-            if !resolution.displayName.isEmpty && resolution.displayName != korInput {
-                korInput = resolution.displayName
-            }
-            korResolutionMessage = banner(for: resolution)
-            isApplyingKorrespondent = false
-        }
-
         meta.korrespondent = korInput.trimmingCharacters(in: .whitespacesAndNewlines)
         meta.dokumenttyp = typInput.trimmingCharacters(in: .whitespacesAndNewlines)
         if !meta.dokumenttyp.isEmpty { catalog.addDokumenttyp(meta.dokumenttyp) }
+        // Korrespondenten-Auflösung wird NICHT während des Tippens durchgeführt
+    }
+
+    /// Wird explizit aufgerufen, wenn Korrespondent aufgelöst werden soll (beim Verlassen des Feldes oder beim Speichern)
+    private func resolveKorrespondentNow() {
+        guard !isApplyingKorrespondent else { return }
+        isApplyingKorrespondent = true
+        defer { isApplyingKorrespondent = false }
+
+        let resolution = catalog.resolveKorrespondent(korInput, existingFolders: existingCorrespondentFolders)
+        meta.korrespondent = resolution.canonical
+
+        // NUR überschreiben, wenn ein eindeutiger Match gefunden wurde (nicht bei Fuzzy-Matching während der Eingabe)
+        if !resolution.displayName.isEmpty && resolution.displayName != korInput {
+            // Nur bei klaren Matches übernehmen
+            switch resolution.decision {
+            case .existingCanonical, .aliasMapped:
+                korInput = resolution.displayName
+            case .folderMapped, .fuzzyMapped:
+                // Bei Fuzzy-Matches NUR das Banner anzeigen, aber NICHT das Feld überschreiben
+                break
+            default:
+                break
+            }
+        }
+        korResolutionMessage = banner(for: resolution)
     }
 
     private func doPlace() {
@@ -413,6 +438,8 @@ struct MetadataEditorView: View {
             alertMsg = "Bitte zuerst den Archiv-Basisordner wählen."
             return
         }
+        // Vor dem Speichern: finale Korrespondenten-Auflösung durchführen
+        resolveKorrespondentNow()
         persistInputsToCatalog()
         doPlaceInternal(base: base, conflictPolicy: settings.conflictPolicy)
     }
@@ -548,7 +575,10 @@ struct MetadataEditorView: View {
             }.sorted()
             DispatchQueue.main.async {
                 existingCorrespondentFolders = names
-                persistInputsToCatalog()
+                // Nach dem Laden der Ordner: Korrespondent erneut auflösen (falls bereits ein Wert existiert)
+                if !korInput.isEmpty {
+                    resolveKorrespondentNow()
+                }
             }
         }
     }
