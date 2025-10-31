@@ -7,6 +7,7 @@
 
 import SwiftUI
 import PDFKit
+import Combine
 
 struct MainDashboardView: View {
     @EnvironmentObject private var store: DocumentStore
@@ -63,9 +64,10 @@ struct MainDashboardView: View {
                 if settings.sourceBaseURL != nil && store.items.isEmpty {
                     store.scanSourceFolder(settings.sourceBaseURL)
                 }
+                analysis.preloadStates(for: store.items.map { $0.fileURL })
                 autoSelectFirstIfNeeded()
             }
-            
+
             .onAppear {
                 if let window = NSApp.keyWindow {
                     WindowManager.shared.registerMainWindow(window)
@@ -91,10 +93,14 @@ struct MainDashboardView: View {
             // NEU: Live-Refresh bei Änderungen im Quellordner
             .onReceive(NotificationCenter.default.publisher(for: .sourceFolderDidChange)) { _ in
                 store.scanSourceFolder(settings.sourceBaseURL)
+                analysis.preloadStates(for: store.items.map { $0.fileURL })
                 // Auswahl sanft stabil halten: wenn altes File weg ist, ersten Eintrag wählen
                 if let sel = selection, !store.items.contains(sel) {
                     selection = store.items.first
                 }
+            }
+            .onReceive(store.$items) { items in
+                analysis.preloadStates(for: items.map { $0.fileURL })
             }
         }
     }

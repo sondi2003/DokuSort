@@ -44,6 +44,25 @@ final class AnalysisManager: ObservableObject {
         return Double(analyzedCount) / Double(total)
     }
 
+    /// Lädt bekannte States aus der Persistenz in den Cache, falls sie noch fehlen.
+    /// Nützlich, wenn Analysen im Hintergrund durchgeführt wurden, während die UI nicht sichtbar war.
+    func preloadStates(for urls: [URL]) {
+        var didUpdate = false
+        for url in urls {
+            let canonicalURL = url.normalizedFileURL
+            let key = key(for: canonicalURL)
+            if cache[key] != nil { continue }
+            if let state = persistence.state(for: canonicalURL), isStateValid(state, for: canonicalURL) {
+                cache[key] = state
+                didUpdate = true
+                print("📦 [AnalysisManager] Preload aus Persistenz: \(canonicalURL.lastPathComponent)")
+            }
+        }
+        if didUpdate {
+            objectWillChange.send()
+        }
+    }
+
     // MARK: Public: Query
 
     /// Liefert State aus Cache oder Persistenz (falls gueltig).
