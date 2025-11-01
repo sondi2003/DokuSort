@@ -61,10 +61,14 @@ struct MainDashboardView: View {
                 AppSettingsSheet().environmentObject(settings)
             }
             .onAppear {
-                if settings.sourceBaseURL != nil && store.items.isEmpty {
-                    store.scanSourceFolder(settings.sourceBaseURL)
+                // Immer Quelle scannen und States laden beim Öffnen
+                if settings.sourceBaseURL != nil {
+                    if store.items.isEmpty {
+                        store.scanSourceFolder(settings.sourceBaseURL)
+                    }
+                    // WICHTIG: States aus Persistenz laden (auch wenn bereits im Cache)
+                    analysis.preloadStates(for: store.items.map { $0.fileURL })
                 }
-                analysis.preloadStates(for: store.items.map { $0.fileURL })
                 autoSelectFirstIfNeeded()
             }
 
@@ -76,31 +80,46 @@ struct MainDashboardView: View {
             // Analyse-Resultate übernehmen
             .onReceive(NotificationCenter.default.publisher(for: .documentDidArchive)) { note in
                 if let url = note.object as? URL {
-                    analysis.remove(url: url)
+                    let normalizedURL = url.normalizedFileURL
+                    analysis.remove(url: normalizedURL)
+                    // Store neu scannen nach Ablage
+                    store.scanSourceFolder(settings.sourceBaseURL)
+                    // Selection aktualisieren nach Scan
+                    updateSelectionAfterScan()
                 }
             }
-            
+
             .onReceive(NotificationCenter.default.publisher(for: .analysisDidFinish)) { note in
-                guard
-                    let url = note.object as? URL,
-                    let st = note.userInfo?["state"] as? AnalysisState
-                else { return }
-                analysis.markAnalyzed(url: url, state: st)
+                guard let url = note.object as? URL else { return }
+                let normalizedURL = url.normalizedFileURL
+
+                if let st = note.userInfo?["state"] as? AnalysisState {
+                    analysis.markAnalyzed(url: normalizedURL, state: st)
+                } else {
+                    // Fallback: aus Persistenz laden
+                    if let st = analysis.state(for: normalizedURL) {
+                        analysis.markAnalyzed(url: normalizedURL, state: st)
+                    }
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .analysisDidFail)) { note in
-                if let url = note.object as? URL { analysis.markFailed(url: url) }
+                if let url = note.object as? URL {
+                    let normalizedURL = url.normalizedFileURL
+                    analysis.markFailed(url: normalizedURL)
+                }
             }
             // NEU: Live-Refresh bei Änderungen im Quellordner
             .onReceive(NotificationCenter.default.publisher(for: .sourceFolderDidChange)) { _ in
                 store.scanSourceFolder(settings.sourceBaseURL)
                 analysis.preloadStates(for: store.items.map { $0.fileURL })
-                // Auswahl sanft stabil halten: wenn altes File weg ist, ersten Eintrag wählen
-                if let sel = selection, !store.items.contains(sel) {
-                    selection = store.items.first
-                }
+                // Selection aktualisieren nach Scan
+                updateSelectionAfterScan()
             }
             .onReceive(store.$items) { items in
+                // Bei Änderungen der Items: States neu laden
                 analysis.preloadStates(for: items.map { $0.fileURL })
+                // Selection aktualisieren nach Store-Änderung
+                updateSelectionAfterScan()
             }
         }
     }
@@ -242,6 +261,7 @@ struct MainDashboardView: View {
                     onNext: { selection = next(of: sel) },
                     embedPreview: false
                 )
+                .id(sel.fileURL)  // WICHTIG: View neu rendern bei URL-Änderung
             } else {
                 placeholder("Bereit", sub: "Sobald ein PDF gewählt ist, erscheinen hier die erkannten Daten.")
             }
@@ -253,6 +273,30 @@ struct MainDashboardView: View {
     private func autoSelectFirstIfNeeded() {
         if selection == nil, let first = store.items.first {
             selection = first
+        }
+    }
+
+    /// Aktualisiert die Selection nach einem Store-Scan, um sicherzustellen,
+    /// dass die Selection auf das richtige Item zeigt (auch wenn die UUID sich geändert hat).
+    private func updateSelectionAfterScan() {
+        guard let currentSelection = selection else {
+            // Keine Selection vorhanden, versuche erste Item auszuwählen
+            autoSelectFirstIfNeeded()
+            return
+        }
+
+        // Finde das gleiche Dokument basierend auf der fileURL (normalisiert)
+        let currentURL = currentSelection.fileURL.normalizedFileURL
+        if let matchingItem = store.items.first(where: { $0.fileURL.normalizedFileURL.path == currentURL.path }) {
+            // Dokument noch vorhanden: Selection auf neues Item aktualisieren
+            if matchingItem.id != currentSelection.id {
+                selection = matchingItem
+                print("🔄 [MainDashboard] Selection aktualisiert nach Store-Scan: \(matchingItem.fileName)")
+            }
+        } else {
+            // Dokument nicht mehr vorhanden: erstes Item auswählen
+            selection = store.items.first
+            print("🔄 [MainDashboard] Selection zurückgesetzt (Dokument nicht mehr vorhanden)")
         }
     }
 

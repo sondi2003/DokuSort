@@ -250,13 +250,39 @@ struct MetadataEditorView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .analysisDidFinish)) { note in
             guard let url = note.object as? URL else { return }
-            let target = url.normalizedFileURL
-            guard target == item.fileURL.normalizedFileURL else { return }
+            let notificationURL = url.normalizedFileURL
+            let currentItemURL = item.fileURL.normalizedFileURL
 
+            // Prüfen ob die Notification für das aktuelle Dokument ist
+            guard notificationURL.path == currentItemURL.path else { return }
+
+            // State übernehmen (aus Notification oder Cache)
             if let s = note.userInfo?["state"] as? AnalysisState {
+                print("📨 [Editor] Notification-State empfangen für: \(item.fileURL.lastPathComponent)")
                 applyState(s)
-            } else if let cached = analysis.state(for: target) {
+            } else if let cached = analysis.state(for: currentItemURL) {
+                print("📦 [Editor] Cache-State empfangen für: \(item.fileURL.lastPathComponent)")
                 applyState(cached)
+            }
+        }
+        // NEU: Reagiere auf Cache-Updates (z.B. wenn Fenster geschlossen war und dann geöffnet wird)
+        .onReceive(analysis.objectWillChange) { _ in
+            let normalizedURL = item.fileURL.normalizedFileURL
+
+            // WICHTIG: Immer versuchen, Daten aus dem Cache zu laden, wenn verfügbar
+            // Dies ist entscheidend für das Szenario:
+            // 1. Hauptfenster geschlossen
+            // 2. BackgroundAnalyzer analysiert Dokumente
+            // 3. Hauptfenster wird geöffnet
+            // 4. View sollte die bereits analysierten Daten anzeigen
+            if let st = analysis.state(for: normalizedURL) {
+                // Nur übernehmen, wenn wir noch keine Analysedaten geladen haben
+                // (vermeidet ständige Updates während der Benutzer tippt)
+                let hasNoAnalysisDataYet = lastSuggestion == nil && korInput.isEmpty && typInput.isEmpty
+                if hasNoAnalysisDataYet {
+                    print("🔄 [Editor] Cache-Update empfangen, lade Daten für: \(item.fileURL.lastPathComponent)")
+                    applyState(st)
+                }
             }
         }
     }
@@ -281,8 +307,21 @@ struct MetadataEditorView: View {
     // MARK: Cache-or-Analyze
 
     private func loadFromCacheOrAnalyze() async {
-        if let st = analysis.state(for: item.fileURL) {
+        let normalizedURL = item.fileURL.normalizedFileURL
+
+        if let st = analysis.state(for: normalizedURL) {
             print("✅ [Editor] Übernehme Cache für:", item.fileURL.lastPathComponent)
+            applyState(st)
+            showTransientStatus("Ergebnis aus Cache übernommen", seconds: 1.0)
+            return
+        }
+
+        // Retry-Logik: Kurz warten und nochmal prüfen (falls Cache gerade geladen wird)
+        print("⏳ [Editor] Kein Cache gefunden, warte kurz und prüfe erneut...")
+        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+
+        if let st = analysis.state(for: normalizedURL) {
+            print("✅ [Editor] Cache nach Retry gefunden für:", item.fileURL.lastPathComponent)
             applyState(st)
             showTransientStatus("Ergebnis aus Cache übernommen", seconds: 1.0)
             return
@@ -376,8 +415,10 @@ struct MetadataEditorView: View {
     }
 
     private func publishFinished(using s: Suggestion) {
-        // file facts
-        let values = try? item.fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        // URL normalisieren für konsistente Zuordnung
+        let normalizedURL = item.fileURL.normalizedFileURL
+        let values = try? normalizedURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+
         let state = AnalysisState(
             status: .analyzed,
             confidence: confidence(for: s),
@@ -387,7 +428,10 @@ struct MetadataEditorView: View {
             fileSize: values?.fileSize.map(Int64.init),
             fileModDate: values?.contentModificationDate
         )
-        NotificationCenter.default.post(name: .analysisDidFinish, object: item.fileURL, userInfo: ["state": state])
+
+        // WICHTIG: Normalisierte URL verwenden
+        NotificationCenter.default.post(name: .analysisDidFinish, object: normalizedURL, userInfo: ["state": state])
+        print("📤 [Editor] Notification gesendet für: \(item.fileURL.lastPathComponent)")
     }
 
     private func applySuggestionOverwriting(_ s: Suggestion) {
@@ -451,17 +495,22 @@ struct MetadataEditorView: View {
             autoHideStatus(after: 2.0) // Erfolg verschwindet automatisch nach 2s
         }
         do {
+            // URL normalisieren für konsistente Zuordnung
+            let normalizedSourceURL = item.fileURL.normalizedFileURL
+
             let result = try FileOps.place(item: item,
                                            meta: meta,
                                            archiveBaseURL: base,
                                            mode: settings.currentPlaceMode(),
                                            conflictPolicy: conflictPolicy)
 
-            // Liste aktualisieren
-            store.scanSourceFolder(settings.sourceBaseURL)
+            // WICHTIG: Normalisierte URL für Bereinigung verwenden
+            // Dies stellt sicher, dass der Cache/Persistenz-Eintrag korrekt entfernt wird
+            NotificationCenter.default.post(name: .documentDidArchive, object: normalizedSourceURL)
+            print("🗑️ [Editor] Bereinigung angefordert für: \(item.fileURL.lastPathComponent)")
 
-            // → Persistenz bereinigen (JSON-Eintrag weg)
-            NotificationCenter.default.post(name: .documentDidArchive, object: item.fileURL)
+            // Liste aktualisieren (entfernt das abgelegte Dokument aus der Quelle)
+            store.scanSourceFolder(settings.sourceBaseURL)
 
             // Erfolg als Banner (auto-hide), kein Alert
             statusText = "Ablage erfolgreich: \(result.finalURL.lastPathComponent)"
