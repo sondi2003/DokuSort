@@ -150,6 +150,60 @@ final class CatalogStore: ObservableObject {
         }
     }
 
+    // MARK: Management Methods
+
+    func addKorrespondent(_ value: String) {
+        let cleaned = CorrespondentNormalizer.prettyDisplayName(from: value)
+        guard !cleaned.isEmpty else { return }
+        registerKorrespondent(cleaned)
+        save()
+    }
+
+    func deleteKorrespondent(at index: Int) {
+        guard index >= 0 && index < korrespondenten.count else { return }
+        let removed = korrespondenten.remove(at: index)
+        // Remove aliases pointing to this korrespondent
+        let key = CorrespondentNormalizer.normalizedKey(for: removed)
+        korrespondentAliases.removeValue(forKey: key)
+        // Remove any other aliases pointing to this korrespondent
+        korrespondentAliases = korrespondentAliases.filter { $0.value != removed }
+        save()
+    }
+
+    func editKorrespondent(at index: Int, newValue: String) {
+        guard index >= 0 && index < korrespondenten.count else { return }
+        let cleaned = CorrespondentNormalizer.prettyDisplayName(from: newValue)
+        guard !cleaned.isEmpty else { return }
+        let oldValue = korrespondenten[index]
+        korrespondenten[index] = cleaned
+        // Update aliases
+        let oldKey = CorrespondentNormalizer.normalizedKey(for: oldValue)
+        let newKey = CorrespondentNormalizer.normalizedKey(for: cleaned)
+        if korrespondentAliases[oldKey] == oldValue {
+            korrespondentAliases.removeValue(forKey: oldKey)
+        }
+        korrespondentAliases[newKey] = cleaned
+        // Update any other aliases pointing to old value
+        for (key, value) in korrespondentAliases where value == oldValue {
+            korrespondentAliases[key] = cleaned
+        }
+        save()
+    }
+
+    func deleteDokumenttyp(at index: Int) {
+        guard index >= 0 && index < dokumenttypen.count else { return }
+        dokumenttypen.remove(at: index)
+        save()
+    }
+
+    func editDokumenttyp(at index: Int, newValue: String) {
+        guard index >= 0 && index < dokumenttypen.count else { return }
+        let cleaned = CorrespondentNormalizer.prettyDisplayName(from: newValue)
+        guard !cleaned.isEmpty else { return }
+        dokumenttypen[index] = cleaned
+        save()
+    }
+
     func suggestions(for input: String, in kind: Kind, limit: Int = 8) -> [String] {
         let source = (kind == .korrespondent) ? korrespondenten : dokumenttypen
         let needle = input.lowercased()
