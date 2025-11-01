@@ -61,10 +61,14 @@ struct MainDashboardView: View {
                 AppSettingsSheet().environmentObject(settings)
             }
             .onAppear {
-                if settings.sourceBaseURL != nil && store.items.isEmpty {
-                    store.scanSourceFolder(settings.sourceBaseURL)
+                // Immer Quelle scannen und States laden beim Öffnen
+                if settings.sourceBaseURL != nil {
+                    if store.items.isEmpty {
+                        store.scanSourceFolder(settings.sourceBaseURL)
+                    }
+                    // WICHTIG: States aus Persistenz laden (auch wenn bereits im Cache)
+                    analysis.preloadStates(for: store.items.map { $0.fileURL })
                 }
-                analysis.preloadStates(for: store.items.map { $0.fileURL })
                 autoSelectFirstIfNeeded()
             }
 
@@ -76,19 +80,31 @@ struct MainDashboardView: View {
             // Analyse-Resultate übernehmen
             .onReceive(NotificationCenter.default.publisher(for: .documentDidArchive)) { note in
                 if let url = note.object as? URL {
-                    analysis.remove(url: url)
+                    let normalizedURL = url.normalizedFileURL
+                    analysis.remove(url: normalizedURL)
+                    // Store neu scannen nach Ablage
+                    store.scanSourceFolder(settings.sourceBaseURL)
                 }
             }
-            
+
             .onReceive(NotificationCenter.default.publisher(for: .analysisDidFinish)) { note in
-                guard
-                    let url = note.object as? URL,
-                    let st = note.userInfo?["state"] as? AnalysisState
-                else { return }
-                analysis.markAnalyzed(url: url, state: st)
+                guard let url = note.object as? URL else { return }
+                let normalizedURL = url.normalizedFileURL
+
+                if let st = note.userInfo?["state"] as? AnalysisState {
+                    analysis.markAnalyzed(url: normalizedURL, state: st)
+                } else {
+                    // Fallback: aus Persistenz laden
+                    if let st = analysis.state(for: normalizedURL) {
+                        analysis.markAnalyzed(url: normalizedURL, state: st)
+                    }
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .analysisDidFail)) { note in
-                if let url = note.object as? URL { analysis.markFailed(url: url) }
+                if let url = note.object as? URL {
+                    let normalizedURL = url.normalizedFileURL
+                    analysis.markFailed(url: normalizedURL)
+                }
             }
             // NEU: Live-Refresh bei Änderungen im Quellordner
             .onReceive(NotificationCenter.default.publisher(for: .sourceFolderDidChange)) { _ in
@@ -100,6 +116,7 @@ struct MainDashboardView: View {
                 }
             }
             .onReceive(store.$items) { items in
+                // Bei Änderungen der Items: States neu laden
                 analysis.preloadStates(for: items.map { $0.fileURL })
             }
         }
