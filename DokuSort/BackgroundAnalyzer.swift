@@ -148,7 +148,8 @@ final class BackgroundAnalyzer: ObservableObject {
         if !embedded.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if let s = try? await OllamaClient.suggest(from: embedded,
                                                        baseURL: settings.ollamaBaseURL,
-                                                       model: settings.ollamaModel),
+                                                       model: settings.ollamaModel,
+                                                       promptTemplate: settings.ollamaPrompt),
                hasUsefulValues(s) {
                 publish(url: url, suggestion: s)
                 return
@@ -160,7 +161,8 @@ final class BackgroundAnalyzer: ObservableObject {
            !ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if let s2 = try? await OllamaClient.suggest(from: ocrText,
                                                         baseURL: settings.ollamaBaseURL,
-                                                        model: settings.ollamaModel),
+                                                        model: settings.ollamaModel,
+                                                        promptTemplate: settings.ollamaPrompt),
                hasUsefulValues(s2) {
                 publish(url: url, suggestion: s2)
                 return

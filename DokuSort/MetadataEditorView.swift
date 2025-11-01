@@ -359,7 +359,8 @@ struct MetadataEditorView: View {
             if !embedded.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 if let s = try? await OllamaClient.suggest(from: embedded,
                                                            baseURL: settings.ollamaBaseURL,
-                                                           model: settings.ollamaModel),
+                                                           model: settings.ollamaModel,
+                                                           promptTemplate: settings.ollamaPrompt),
                    hasUsefulValues(s) {
                     applySuggestionOverwriting(s)
                     lastSuggestion = s
@@ -375,7 +376,8 @@ struct MetadataEditorView: View {
             if let ocrText, !ocrText.isEmpty {
                 if let s2 = try? await OllamaClient.suggest(from: ocrText,
                                                             baseURL: settings.ollamaBaseURL,
-                                                            model: settings.ollamaModel),
+                                                            model: settings.ollamaModel,
+                                                            promptTemplate: settings.ollamaPrompt),
                    hasUsefulValues(s2) {
                     applySuggestionOverwriting(s2)
                     lastSuggestion = s2
