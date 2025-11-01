@@ -173,9 +173,11 @@ final class BackgroundAnalyzer: ObservableObject {
             return
         }
 
-        // 5) Gescheitert
-        analysis.markFailed(url: url)
-        NotificationCenter.default.post(name: .analysisDidFail, object: url)
+        // 5) Gescheitert - URL normalisieren
+        let normalizedURL = url.normalizedFileURL
+        analysis.markFailed(url: normalizedURL)
+        NotificationCenter.default.post(name: .analysisDidFail, object: normalizedURL)
+        print("❌ [BackgroundAnalyzer] Analyse fehlgeschlagen für: \(normalizedURL.lastPathComponent)")
     }
 
     // MARK: Util
@@ -208,8 +210,10 @@ final class BackgroundAnalyzer: ObservableObject {
     }
 
     private func publish(url: URL, suggestion: Suggestion) {
-        // AnalyseState bauen inkl. Dateifacts
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        // URL normalisieren für konsistente Zuordnung
+        let normalizedURL = url.normalizedFileURL
+        let values = try? normalizedURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+
         let state = AnalysisState(
             status: .analyzed,
             confidence: confidence(for: suggestion),
@@ -220,7 +224,8 @@ final class BackgroundAnalyzer: ObservableObject {
             fileModDate: values?.contentModificationDate
         )
 
-        // UI informieren → AnalysisManager wird via Notification speichern
-        NotificationCenter.default.post(name: .analysisDidFinish, object: url, userInfo: ["state": state])
+        // WICHTIG: Normalisierte URL verwenden für konsistente Zuordnung
+        NotificationCenter.default.post(name: .analysisDidFinish, object: normalizedURL, userInfo: ["state": state])
+        print("📤 [BackgroundAnalyzer] State publiziert für: \(normalizedURL.lastPathComponent)")
     }
 }

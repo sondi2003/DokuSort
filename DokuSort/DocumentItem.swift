@@ -10,15 +10,17 @@ import Foundation
 struct DocumentItem: Identifiable, Hashable {
     let id: UUID
     let fileName: String
-    let fileURL: URL
+    let fileURL: URL  // Immer normalisiert
     let fileSize: Int64?
     let addedAt: Date
 
     init(url: URL, fileSize: Int64?) {
-        self.id = UUID()
+        // WICHTIG: URL sofort normalisieren für konsistente Zuordnung
         let normalizedURL = url.normalizedFileURL
+
+        self.id = UUID()
         self.fileName = normalizedURL.lastPathComponent
-        self.fileURL = normalizedURL
+        self.fileURL = normalizedURL  // Gespeichert wird die normalisierte URL
         self.fileSize = fileSize
         self.addedAt = Date()
     }

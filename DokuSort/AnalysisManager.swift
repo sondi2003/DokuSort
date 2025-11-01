@@ -48,18 +48,27 @@ final class AnalysisManager: ObservableObject {
     /// Nützlich, wenn Analysen im Hintergrund durchgeführt wurden, während die UI nicht sichtbar war.
     func preloadStates(for urls: [URL]) {
         var didUpdate = false
+        var loadedCount = 0
+
         for url in urls {
             let canonicalURL = url.normalizedFileURL
             let key = key(for: canonicalURL)
+
+            // Wenn bereits im Cache, überspringen
             if cache[key] != nil { continue }
+
+            // Aus Persistenz laden wenn verfügbar und gültig
             if let state = persistence.state(for: canonicalURL), isStateValid(state, for: canonicalURL) {
                 cache[key] = state
                 didUpdate = true
-                print("📦 [AnalysisManager] Preload aus Persistenz: \(canonicalURL.lastPathComponent)")
+                loadedCount += 1
+                print("📦 [AnalysisManager] Preload aus Persistenz: \(canonicalURL.lastPathComponent) (Konfidenz: \(state.confidence))")
             }
         }
+
         if didUpdate {
             objectWillChange.send()
+            print("✅ [AnalysisManager] Preload abgeschlossen: \(loadedCount) States aus Persistenz geladen")
         }
     }
 
