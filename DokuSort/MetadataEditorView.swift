@@ -269,13 +269,20 @@ struct MetadataEditorView: View {
         .onReceive(analysis.objectWillChange) { _ in
             let normalizedURL = item.fileURL.normalizedFileURL
 
-            // Nur laden, wenn wir aktuell noch keine Daten haben UND der Cache jetzt Daten hat
-            let currentlyHasNoData = korInput.isEmpty && typInput.isEmpty
-            guard currentlyHasNoData else { return }
-
+            // WICHTIG: Immer versuchen, Daten aus dem Cache zu laden, wenn verfügbar
+            // Dies ist entscheidend für das Szenario:
+            // 1. Hauptfenster geschlossen
+            // 2. BackgroundAnalyzer analysiert Dokumente
+            // 3. Hauptfenster wird geöffnet
+            // 4. View sollte die bereits analysierten Daten anzeigen
             if let st = analysis.state(for: normalizedURL) {
-                print("🔄 [Editor] Cache-Update empfangen, lade Daten für: \(item.fileURL.lastPathComponent)")
-                applyState(st)
+                // Nur übernehmen, wenn wir noch keine Analysedaten geladen haben
+                // (vermeidet ständige Updates während der Benutzer tippt)
+                let hasNoAnalysisDataYet = lastSuggestion == nil && korInput.isEmpty && typInput.isEmpty
+                if hasNoAnalysisDataYet {
+                    print("🔄 [Editor] Cache-Update empfangen, lade Daten für: \(item.fileURL.lastPathComponent)")
+                    applyState(st)
+                }
             }
         }
     }
