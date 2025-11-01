@@ -49,7 +49,7 @@ final class PersistedStateStore {
     }
 
     private func saveToDisk() {
-        queue.async {
+        queue.sync {
             do {
                 let data = try JSONEncoder().encode(self.states)
                 try data.write(to: self.fileURL, options: [.atomic])
