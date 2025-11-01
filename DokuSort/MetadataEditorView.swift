@@ -265,6 +265,19 @@ struct MetadataEditorView: View {
                 applyState(cached)
             }
         }
+        // NEU: Reagiere auf Cache-Updates (z.B. wenn Fenster geschlossen war und dann geöffnet wird)
+        .onReceive(analysis.objectWillChange) { _ in
+            let normalizedURL = item.fileURL.normalizedFileURL
+
+            // Nur laden, wenn wir aktuell noch keine Daten haben UND der Cache jetzt Daten hat
+            let currentlyHasNoData = korInput.isEmpty && typInput.isEmpty
+            guard currentlyHasNoData else { return }
+
+            if let st = analysis.state(for: normalizedURL) {
+                print("🔄 [Editor] Cache-Update empfangen, lade Daten für: \(item.fileURL.lastPathComponent)")
+                applyState(st)
+            }
+        }
     }
 
     // MARK: Reset
@@ -291,6 +304,17 @@ struct MetadataEditorView: View {
 
         if let st = analysis.state(for: normalizedURL) {
             print("✅ [Editor] Übernehme Cache für:", item.fileURL.lastPathComponent)
+            applyState(st)
+            showTransientStatus("Ergebnis aus Cache übernommen", seconds: 1.0)
+            return
+        }
+
+        // Retry-Logik: Kurz warten und nochmal prüfen (falls Cache gerade geladen wird)
+        print("⏳ [Editor] Kein Cache gefunden, warte kurz und prüfe erneut...")
+        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+
+        if let st = analysis.state(for: normalizedURL) {
+            print("✅ [Editor] Cache nach Retry gefunden für:", item.fileURL.lastPathComponent)
             applyState(st)
             showTransientStatus("Ergebnis aus Cache übernommen", seconds: 1.0)
             return
