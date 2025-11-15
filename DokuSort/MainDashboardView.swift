@@ -46,7 +46,6 @@ struct MainDashboardView: View {
                 ToolbarItem {
                     Button {
                         store.scanSourceFolder(settings.sourceBaseURL)
-                        analysis.reset()
                         autoSelectFirstIfNeeded()
                     } label: {
                         Label("Quelle scannen", systemImage: "tray.full")
@@ -62,15 +61,6 @@ struct MainDashboardView: View {
                 AppSettingsSheet().environmentObject(settings)
             }
             .onAppear {
-                // Immer Quelle scannen und States laden beim Öffnen
-                if settings.sourceBaseURL != nil {
-                    if store.items.isEmpty {
-                        store.scanSourceFolder(settings.sourceBaseURL)
-                    }
-                    // WICHTIG: States aus Persistenz laden (auch wenn bereits im Cache)
-                    analysis.preloadStates(for: store.items.map { $0.fileURL })
-                    analysis.refreshFromPersistence(for: store.items.map { $0.fileURL })
-                }
                 autoSelectFirstIfNeeded()
             }
 
@@ -109,14 +99,6 @@ struct MainDashboardView: View {
                     let normalizedURL = url.normalizedFileURL
                     analysis.markFailed(url: normalizedURL)
                 }
-            }
-            // NEU: Live-Refresh bei Änderungen im Quellordner
-            .onReceive(NotificationCenter.default.publisher(for: .sourceFolderDidChange)) { _ in
-                store.scanSourceFolder(settings.sourceBaseURL)
-                analysis.preloadStates(for: store.items.map { $0.fileURL })
-                analysis.refreshFromPersistence(for: store.items.map { $0.fileURL })
-                // Selection aktualisieren nach Scan
-                updateSelectionAfterScan()
             }
             .onReceive(store.$items) { items in
                 // Bei Änderungen der Items: States neu laden

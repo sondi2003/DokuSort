@@ -272,7 +272,7 @@ struct MetadataEditorView: View {
             // WICHTIG: Immer versuchen, Daten aus dem Cache zu laden, wenn verfügbar
             // Dies ist entscheidend für das Szenario:
             // 1. Hauptfenster geschlossen
-            // 2. BackgroundAnalyzer analysiert Dokumente
+            // 2. Analyse wurde manuell angestoßen (z. B. nach erneutem Scannen)
             // 3. Hauptfenster wird geöffnet
             // 4. View sollte die bereits analysierten Daten anzeigen
             if let st = analysis.state(for: normalizedURL) {

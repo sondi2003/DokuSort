@@ -123,7 +123,7 @@ final class AnalysisManager: ObservableObject {
         return false
     }
 
-    // MARK: Public: Mutation API (direkte Aufrufer wie BackgroundAnalyzer)
+    // MARK: Public: Mutation API (z. B. für manuelle Analyse-Workflows)
 
     func markAnalyzed(url: URL, state: AnalysisState) {
         let canonicalURL = url.normalizedFileURL

@@ -36,6 +36,11 @@ final class DocumentStore: ObservableObject {
         self.items = tmp
     }
 
+    /// Entfernt alle geladenen Elemente, z. B. nach Quellenwechsel.
+    func clear() {
+        items = []
+    }
+
     // NEU: Quelle scannen (alle PDFs im Quellordner, Ebene 1)
     func scanSourceFolder(_ source: URL?) {
         guard let source = source?.normalizedFileURL else { self.items = []; return }

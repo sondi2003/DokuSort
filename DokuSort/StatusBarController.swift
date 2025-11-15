@@ -7,6 +7,7 @@
 
 import Foundation
 import AppKit
+import Combine
 
 /// Steuert das Menüleisten-Icon (Status Bar Item) für DokuSort.
 final class StatusBarController: NSObject {
@@ -17,34 +18,26 @@ final class StatusBarController: NSObject {
     private weak var store: DocumentStore?
     private weak var settings: SettingsStore?
     private weak var analysis: AnalysisManager?
-    private weak var watcher: SourceWatcher?
 
-    // Zustand
-    private var isPaused = false
+    private var cancellables: Set<AnyCancellable> = []
 
     init(store: DocumentStore,
          settings: SettingsStore,
-         analysis: AnalysisManager,
-         watcher: SourceWatcher) {
+         analysis: AnalysisManager) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.store = store
         self.settings = settings
         self.analysis = analysis
-        self.watcher = watcher
         super.init()
         configureStatusItem()
         buildMenu()
+        bindObservers(store: store, settings: settings, analysis: analysis)
         updateMenuDynamicParts()
-        // Auf Analyse-/Quellordner-Events reagieren, um das Menü aktuell zu halten
-        NotificationCenter.default.addObserver(self, selector: #selector(handleAnalysisChanged(_:)),
-                                               name: .analysisDidFinish, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(handleSourceChanged),
-                                               name: .sourceFolderDidChange, object: nil)
     }
 
     deinit {
         NSStatusBar.system.removeStatusItem(statusItem)
-        NotificationCenter.default.removeObserver(self)
+        cancellables.removeAll()
     }
 
     // MARK: - Setup
@@ -59,7 +52,7 @@ final class StatusBarController: NSObject {
             } else {
                 button.title = "DokuSort"
             }
-            button.toolTip = "DokuSort – Hintergrundanalyse"
+            button.toolTip = "DokuSort Status"
         }
         statusItem.menu = menu
     }
@@ -68,7 +61,6 @@ final class StatusBarController: NSObject {
         case header = 10
         case progress = 11
         case sourcePath = 12
-        case pauseResume = 20
     }
 
     private func buildMenu() {
@@ -104,11 +96,6 @@ final class StatusBarController: NSObject {
         rescan.target = self
         menu.addItem(rescan)
 
-        let pauseResume = NSMenuItem(title: "Beobachtung pausieren", action: #selector(togglePause), keyEquivalent: "p")
-        pauseResume.target = self
-        pauseResume.tag = Tags.pauseResume.rawValue
-        menu.addItem(pauseResume)
-
         menu.addItem(.separator())
 
         let quit = NSMenuItem(title: "Beenden", action: #selector(quitApp), keyEquivalent: "q")
@@ -116,14 +103,21 @@ final class StatusBarController: NSObject {
         menu.addItem(quit)
     }
 
-    // MARK: - Dynamic Updates
+    private func bindObservers(store: DocumentStore, settings: SettingsStore, analysis: AnalysisManager) {
+        store.$items
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateMenuDynamicParts() }
+            .store(in: &cancellables)
 
-    @objc private func handleAnalysisChanged(_ note: Notification) {
-        updateMenuDynamicParts()
-    }
+        settings.$sourceBaseURL
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateMenuDynamicParts() }
+            .store(in: &cancellables)
 
-    @objc private func handleSourceChanged() {
-        updateMenuDynamicParts()
+        analysis.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateMenuDynamicParts() }
+            .store(in: &cancellables)
     }
 
     private func updateMenuDynamicParts() {
@@ -143,10 +137,6 @@ final class StatusBarController: NSObject {
                 sourceItem.title = "Quelle: (nicht gesetzt)"
             }
         }
-
-        if let pauseItem = menu.item(withTag: Tags.pauseResume.rawValue) {
-            pauseItem.title = isPaused ? "Beobachtung fortsetzen" : "Beobachtung pausieren"
-        }
     }
 
     // MARK: - Actions
@@ -159,20 +149,11 @@ final class StatusBarController: NSObject {
     }
 
     @objc private func scanNow() {
-        guard let store, let settings else { return }
+        guard let store, let settings, let analysis else { return }
         store.scanSourceFolder(settings.sourceBaseURL)
-    }
-
-    @objc private func togglePause() {
-        guard let watcher, let settings else { return }
-        if isPaused {
-            watcher.startWatching(url: settings.sourceBaseURL)
-            isPaused = false
-        } else {
-            watcher.stopWatching()
-            isPaused = true
-        }
-        updateMenuDynamicParts()
+        let urls = store.items.map { $0.fileURL }
+        analysis.preloadStates(for: urls)
+        analysis.refreshFromPersistence(for: urls)
     }
 
     @objc private func quitApp() {
