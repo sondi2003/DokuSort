@@ -8,10 +8,34 @@
 import Foundation
 import UniformTypeIdentifiers
 import Combine
+import Dispatch
+#if os(macOS)
+import Darwin
+#endif
 
 @MainActor
 final class DocumentStore: ObservableObject {
     @Published private(set) var items: [DocumentItem] = []
+
+    private var monitorSource: DispatchSourceFileSystemObject?
+    private var monitorFileDescriptor: CInt = -1
+    private var monitorURL: URL?
+    private var monitorSecurityScopeActive = false
+    private let monitorQueue = DispatchQueue(label: "ch.rulab.DokuSort.DocumentStore.monitor", qos: .utility)
+
+    private func cleanupMonitoringResources() {
+        if monitorFileDescriptor != -1 {
+            close(monitorFileDescriptor)
+            monitorFileDescriptor = -1
+        }
+
+        if monitorSecurityScopeActive {
+            monitorURL?.stopAccessingSecurityScopedResource()
+            monitorSecurityScopeActive = false
+        }
+
+        monitorURL = nil
+    }
 
     // App-Dokumente (nutzen wir weiterhin für evtl. manuelle Importe)
     private var docsDir: URL {
@@ -41,6 +65,10 @@ final class DocumentStore: ObservableObject {
         items = []
     }
 
+    deinit {
+        stopMonitoring()
+    }
+
     // NEU: Quelle scannen (alle PDFs im Quellordner, Ebene 1)
     func scanSourceFolder(_ source: URL?) {
         guard let source = source?.normalizedFileURL else { self.items = []; return }
@@ -60,6 +88,60 @@ final class DocumentStore: ObservableObject {
         }
         tmp.sort { $0.fileName.localizedCaseInsensitiveCompare($1.fileName) == .orderedAscending }
         self.items = tmp
+    }
+
+    func startMonitoring(sourceURL: URL?) {
+        stopMonitoring()
+
+        guard let sourceURL else { return }
+        let normalized = sourceURL.normalizedFileURL
+        let didAccess = normalized.startAccessingSecurityScopedResource()
+
+        let fd = open(normalized.path, O_EVTONLY)
+        guard fd != -1 else {
+            if didAccess { normalized.stopAccessingSecurityScopedResource() }
+            print("⚠️ [DocumentStore] Monitoring konnte nicht gestartet werden – open() fehlgeschlagen")
+            return
+        }
+
+        monitorURL = normalized
+        monitorFileDescriptor = fd
+        monitorSecurityScopeActive = didAccess
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .extend, .attrib, .link, .rename, .delete],
+            queue: monitorQueue
+        )
+
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            let currentURL = self.monitorURL
+            Task { @MainActor in
+                guard
+                    let currentURL,
+                    let activeURL = self.monitorURL,
+                    activeURL.normalizedFileURL == currentURL.normalizedFileURL
+                else { return }
+                self.scanSourceFolder(currentURL)
+            }
+        }
+
+        source.setCancelHandler { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                self.cleanupMonitoringResources()
+            }
+        }
+
+        monitorSource = source
+        source.resume()
+    }
+
+    func stopMonitoring() {
+        monitorSource?.cancel()
+        monitorSource = nil
+        cleanupMonitoringResources()
     }
 
     // Optional: manueller Import (lassen wir drin)
