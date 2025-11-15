@@ -8,6 +8,7 @@
 import SwiftUI
 import PDFKit
 import Combine
+import AppKit
 
 struct MainDashboardView: View {
     @EnvironmentObject private var store: DocumentStore
@@ -16,6 +17,7 @@ struct MainDashboardView: View {
 
     @State private var selection: DocumentItem?
     @State private var showSettings = false
+    @State private var forceAnalyzeToken = UUID()
 
     // Suche + Filter
     @State private var searchText: String = ""
@@ -45,11 +47,19 @@ struct MainDashboardView: View {
                 ToolbarItem {
                     Button {
                         store.scanSourceFolder(settings.sourceBaseURL)
-                        analysis.reset()
                         autoSelectFirstIfNeeded()
                     } label: {
                         Label("Quelle scannen", systemImage: "tray.full")
                     }
+                }
+                ToolbarItem {
+                    Button {
+                        forceAnalyzeToken = UUID()
+                    } label: {
+                        Label("Analyse starten", systemImage: "wand.and.stars")
+                    }
+                    .disabled(selection == nil)
+                    .buttonStyle(.borderedProminent)
                 }
                 ToolbarItem {
                     Button { showSettings = true } label: {
@@ -61,14 +71,6 @@ struct MainDashboardView: View {
                 AppSettingsSheet().environmentObject(settings)
             }
             .onAppear {
-                // Immer Quelle scannen und States laden beim Öffnen
-                if settings.sourceBaseURL != nil {
-                    if store.items.isEmpty {
-                        store.scanSourceFolder(settings.sourceBaseURL)
-                    }
-                    // WICHTIG: States aus Persistenz laden (auch wenn bereits im Cache)
-                    analysis.preloadStates(for: store.items.map { $0.fileURL })
-                }
                 autoSelectFirstIfNeeded()
             }
 
@@ -108,18 +110,16 @@ struct MainDashboardView: View {
                     analysis.markFailed(url: normalizedURL)
                 }
             }
-            // NEU: Live-Refresh bei Änderungen im Quellordner
-            .onReceive(NotificationCenter.default.publisher(for: .sourceFolderDidChange)) { _ in
-                store.scanSourceFolder(settings.sourceBaseURL)
-                analysis.preloadStates(for: store.items.map { $0.fileURL })
-                // Selection aktualisieren nach Scan
-                updateSelectionAfterScan()
-            }
             .onReceive(store.$items) { items in
                 // Bei Änderungen der Items: States neu laden
                 analysis.preloadStates(for: items.map { $0.fileURL })
+                analysis.refreshFromPersistence(for: items.map { $0.fileURL })
                 // Selection aktualisieren nach Store-Änderung
                 updateSelectionAfterScan()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                let urls = store.items.map { $0.fileURL }
+                analysis.refreshFromPersistence(for: urls)
             }
         }
     }
@@ -259,7 +259,8 @@ struct MainDashboardView: View {
                     item: sel,
                     onPrev: { selection = prev(of: sel) },
                     onNext: { selection = next(of: sel) },
-                    embedPreview: false
+                    embedPreview: false,
+                    forceAnalyzeToken: $forceAnalyzeToken
                 )
                 .id(sel.fileURL)  // WICHTIG: View neu rendern bei URL-Änderung
             } else {

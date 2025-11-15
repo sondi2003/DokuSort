@@ -20,6 +20,7 @@ struct MetadataEditorView: View {
     var onPrev: (() -> Void)? = nil
     var onNext: (() -> Void)? = nil
     var embedPreview: Bool = true   // wenn false: keine eigene PDF-Vorschau im Editor
+    @Binding var forceAnalyzeToken: UUID
 
     @EnvironmentObject private var catalog: CatalogStore
     @EnvironmentObject private var settings: SettingsStore
@@ -245,6 +246,9 @@ struct MetadataEditorView: View {
                 doPlaceInternal(base: base, conflictPolicy: choice)
             }
         }
+        .onChange(of: forceAnalyzeToken) { _, _ in
+            Task { await runAutoSuggestionAndApply() }
+        }
         .onReceive(settings.$archiveBaseURL) { _ in
             refreshExistingCorrespondentsFromArchive()
         }
@@ -272,7 +276,7 @@ struct MetadataEditorView: View {
             // WICHTIG: Immer versuchen, Daten aus dem Cache zu laden, wenn verfügbar
             // Dies ist entscheidend für das Szenario:
             // 1. Hauptfenster geschlossen
-            // 2. BackgroundAnalyzer analysiert Dokumente
+            // 2. Analyse wurde manuell angestoßen (z. B. nach erneutem Scannen)
             // 3. Hauptfenster wird geöffnet
             // 4. View sollte die bereits analysierten Daten anzeigen
             if let st = analysis.state(for: normalizedURL) {

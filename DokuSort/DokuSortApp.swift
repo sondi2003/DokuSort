@@ -15,10 +15,9 @@ struct DokuSortApp: App {
     @StateObject private var settings = SettingsStore()
     @StateObject private var catalog = CatalogStore()
     @StateObject private var analysis = AnalysisManager()
-    @StateObject private var watcher = SourceWatcher()
-    @StateObject private var bgAnalyzer = BackgroundAnalyzer()   // << neu
 
     @State private var statusBarController: StatusBarController?
+    @State private var didInitializeSourceScan = false
 
     var body: some Scene {
         WindowGroup {
@@ -28,18 +27,12 @@ struct DokuSortApp: App {
                 .environmentObject(catalog)
                 .environmentObject(analysis)
                 .onAppear {
-                    // Watcher starten + initial scannen
-                    watcher.startWatching(url: settings.sourceBaseURL)
-                    if settings.sourceBaseURL != nil && store.items.isEmpty {
-                        store.scanSourceFolder(settings.sourceBaseURL)
-                    }
-                    // Hintergrund-Analyzer starten (arbeitet komplette Liste ab)
-                    bgAnalyzer.start(store: store, settings: settings, analysis: analysis)
-
                     // Statusbar-Icon initialisieren
                     if statusBarController == nil {
                         statusBarController = StatusBarController(
-                            store: store, settings: settings, analysis: analysis, watcher: watcher
+                            store: store,
+                            settings: settings,
+                            analysis: analysis
                         )
                     }
 
@@ -47,13 +40,27 @@ struct DokuSortApp: App {
                     if let window = NSApp.keyWindow ?? NSApp.windows.first {
                         WindowManager.shared.registerMainWindow(window)
                     }
+
+                    if didInitializeSourceScan == false {
+                        didInitializeSourceScan = true
+                        let sourceURL = settings.sourceBaseURL
+                        store.scanSourceFolder(sourceURL)
+                        store.startMonitoring(sourceURL: sourceURL)
+                        let urls = store.items.map { $0.fileURL }
+                        analysis.preloadStates(for: urls)
+                        analysis.refreshFromPersistence(for: urls)
+                    }
                 }
                 .onChange(of: settings.sourceBaseURL) { _, newValue in
-                    watcher.startWatching(url: newValue)
-                    store.scanSourceFolder(newValue)
+                    store.stopMonitoring()
                     analysis.reset()
-                    // Nach Quellenwechsel die neue Liste abarbeiten
-                    bgAnalyzer.start(store: store, settings: settings, analysis: analysis)
+                    store.scanSourceFolder(newValue)
+                    if let newValue {
+                        store.startMonitoring(sourceURL: newValue)
+                    }
+                    let urls = store.items.map { $0.fileURL }
+                    analysis.preloadStates(for: urls)
+                    analysis.refreshFromPersistence(for: urls)
                 }
         }
     }
