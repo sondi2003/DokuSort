@@ -17,6 +17,7 @@ struct DokuSortApp: App {
     @StateObject private var analysis = AnalysisManager()
 
     @State private var statusBarController: StatusBarController?
+    @State private var didInitializeSourceScan = false
 
     var body: some Scene {
         WindowGroup {
@@ -39,10 +40,27 @@ struct DokuSortApp: App {
                     if let window = NSApp.keyWindow ?? NSApp.windows.first {
                         WindowManager.shared.registerMainWindow(window)
                     }
+
+                    if didInitializeSourceScan == false {
+                        didInitializeSourceScan = true
+                        let sourceURL = settings.sourceBaseURL
+                        store.scanSourceFolder(sourceURL)
+                        store.startMonitoring(sourceURL: sourceURL)
+                        let urls = store.items.map { $0.fileURL }
+                        analysis.preloadStates(for: urls)
+                        analysis.refreshFromPersistence(for: urls)
+                    }
                 }
-                .onChange(of: settings.sourceBaseURL) { _, _ in
-                    store.clear()
+                .onChange(of: settings.sourceBaseURL) { _, newValue in
+                    store.stopMonitoring()
                     analysis.reset()
+                    store.scanSourceFolder(newValue)
+                    if let newValue {
+                        store.startMonitoring(sourceURL: newValue)
+                    }
+                    let urls = store.items.map { $0.fileURL }
+                    analysis.preloadStates(for: urls)
+                    analysis.refreshFromPersistence(for: urls)
                 }
         }
     }
