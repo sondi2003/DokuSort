@@ -17,6 +17,7 @@ struct MainDashboardView: View {
 
     @State private var selection: DocumentItem?
     @State private var showSettings = false
+    @State private var forceAnalyzeToken = UUID()
 
     // Suche + Filter
     @State private var searchText: String = ""
@@ -50,6 +51,15 @@ struct MainDashboardView: View {
                     } label: {
                         Label("Quelle scannen", systemImage: "tray.full")
                     }
+                }
+                ToolbarItem {
+                    Button {
+                        forceAnalyzeToken = UUID()
+                    } label: {
+                        Label("Analyse starten", systemImage: "wand.and.stars")
+                    }
+                    .disabled(selection == nil)
+                    .buttonStyle(.borderedProminent)
                 }
                 ToolbarItem {
                     Button { showSettings = true } label: {
@@ -249,7 +259,8 @@ struct MainDashboardView: View {
                     item: sel,
                     onPrev: { selection = prev(of: sel) },
                     onNext: { selection = next(of: sel) },
-                    embedPreview: false
+                    embedPreview: false,
+                    forceAnalyzeToken: $forceAnalyzeToken
                 )
                 .id(sel.fileURL)  // WICHTIG: View neu rendern bei URL-Änderung
             } else {

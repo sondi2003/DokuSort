@@ -20,6 +20,7 @@ struct MetadataEditorView: View {
     var onPrev: (() -> Void)? = nil
     var onNext: (() -> Void)? = nil
     var embedPreview: Bool = true   // wenn false: keine eigene PDF-Vorschau im Editor
+    @Binding var forceAnalyzeToken: UUID
 
     @EnvironmentObject private var catalog: CatalogStore
     @EnvironmentObject private var settings: SettingsStore
@@ -244,6 +245,9 @@ struct MetadataEditorView: View {
                 guard let choice = choice else { return }
                 doPlaceInternal(base: base, conflictPolicy: choice)
             }
+        }
+        .onChange(of: forceAnalyzeToken) { _, _ in
+            Task { await runAutoSuggestionAndApply() }
         }
         .onReceive(settings.$archiveBaseURL) { _ in
             refreshExistingCorrespondentsFromArchive()
