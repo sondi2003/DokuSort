@@ -72,6 +72,32 @@ final class AnalysisManager: ObservableObject {
         }
     }
 
+    /// Erzwingt einen Sync mit der Persistenz und aktualisiert den Cache, auch wenn bereits Werte vorhanden sind.
+    /// Nützlich, wenn die App im Hintergrund gelaufen ist und der Nutzer später das Fenster öffnet –
+    /// so werden alle bereits verarbeiteten Dokumente zuverlässig angezeigt.
+    func refreshFromPersistence(for urls: [URL]) {
+        var didChange = false
+        let canonicalURLs = urls.map { $0.normalizedFileURL }
+
+        for canonicalURL in canonicalURLs {
+            let key = key(for: canonicalURL)
+
+            if let state = persistence.state(for: canonicalURL), isStateValid(state, for: canonicalURL) {
+                if cache[key] != state {
+                    cache[key] = state
+                    didChange = true
+                }
+            } else if cache.removeValue(forKey: key) != nil {
+                didChange = true
+            }
+        }
+
+        if didChange {
+            objectWillChange.send()
+            print("🔄 [AnalysisManager] Cache mit Persistenz synchronisiert (\(canonicalURLs.count) Dateien geprüft)")
+        }
+    }
+
     // MARK: Public: Query
 
     /// Liefert State aus Cache oder Persistenz (falls gueltig).
