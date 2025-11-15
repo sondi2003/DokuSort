@@ -19,6 +19,8 @@ struct MetadataEditorView: View {
     let item: DocumentItem
     var onPrev: (() -> Void)? = nil
     var onNext: (() -> Void)? = nil
+    var onNextAfterPlacement: (() -> DocumentItem?)? = nil
+    var onPostArchiveNext: ((DocumentItem?) -> Void)? = nil
     var embedPreview: Bool = true   // wenn false: keine eigene PDF-Vorschau im Editor
     @Binding var forceAnalyzeToken: UUID
 
@@ -503,6 +505,7 @@ struct MetadataEditorView: View {
         do {
             // URL normalisieren für konsistente Zuordnung
             let normalizedSourceURL = item.fileURL.normalizedFileURL
+            let nextCandidate = onNextAfterPlacement?()
 
             let result = try FileOps.place(item: item,
                                            meta: meta,
@@ -517,6 +520,10 @@ struct MetadataEditorView: View {
 
             // Liste aktualisieren (entfernt das abgelegte Dokument aus der Quelle)
             store.scanSourceFolder(settings.sourceBaseURL)
+
+            if let onPostArchiveNext {
+                onPostArchiveNext(nextCandidate)
+            }
 
             // Erfolg als Banner (auto-hide), kein Alert
             statusText = "Ablage erfolgreich: \(result.finalURL.lastPathComponent)"

@@ -259,6 +259,14 @@ struct MainDashboardView: View {
                     item: sel,
                     onPrev: { selection = prev(of: sel) },
                     onNext: { selection = next(of: sel) },
+                    onNextAfterPlacement: { next(of: sel) },
+                    onPostArchiveNext: { candidate in
+                        let target = candidate ?? firstPendingItem()
+                        selection = target
+                        if let doc = target, !analysis.isAnalyzed(doc.fileURL) {
+                            forceAnalyzeToken = UUID()
+                        }
+                    },
                     embedPreview: false,
                     forceAnalyzeToken: $forceAnalyzeToken
                 )
@@ -311,6 +319,10 @@ struct MainDashboardView: View {
         guard let idx = store.items.firstIndex(of: item) else { return nil }
         let pi = idx - 1
         return pi >= 0 ? store.items[pi] : nil
+    }
+
+    private func firstPendingItem() -> DocumentItem? {
+        store.items.first { !analysis.isAnalyzed($0.fileURL) }
     }
 
     private func placeholder(_ title: String, sub: String) -> some View {
