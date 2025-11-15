@@ -15,7 +15,7 @@ extension Notification.Name {
 }
 
 /// Persistierbarer Analysezustand pro Datei.
-struct AnalysisState: Codable {
+struct AnalysisState: Codable, Equatable {
     enum Status: String, Codable { case analyzed, failed }
     var status: Status
     var confidence: Double

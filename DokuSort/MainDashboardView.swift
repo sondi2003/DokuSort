@@ -8,6 +8,7 @@
 import SwiftUI
 import PDFKit
 import Combine
+import AppKit
 
 struct MainDashboardView: View {
     @EnvironmentObject private var store: DocumentStore
@@ -68,6 +69,7 @@ struct MainDashboardView: View {
                     }
                     // WICHTIG: States aus Persistenz laden (auch wenn bereits im Cache)
                     analysis.preloadStates(for: store.items.map { $0.fileURL })
+                    analysis.refreshFromPersistence(for: store.items.map { $0.fileURL })
                 }
                 autoSelectFirstIfNeeded()
             }
@@ -112,14 +114,20 @@ struct MainDashboardView: View {
             .onReceive(NotificationCenter.default.publisher(for: .sourceFolderDidChange)) { _ in
                 store.scanSourceFolder(settings.sourceBaseURL)
                 analysis.preloadStates(for: store.items.map { $0.fileURL })
+                analysis.refreshFromPersistence(for: store.items.map { $0.fileURL })
                 // Selection aktualisieren nach Scan
                 updateSelectionAfterScan()
             }
             .onReceive(store.$items) { items in
                 // Bei Änderungen der Items: States neu laden
                 analysis.preloadStates(for: items.map { $0.fileURL })
+                analysis.refreshFromPersistence(for: items.map { $0.fileURL })
                 // Selection aktualisieren nach Store-Änderung
                 updateSelectionAfterScan()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                let urls = store.items.map { $0.fileURL }
+                analysis.refreshFromPersistence(for: urls)
             }
         }
     }
