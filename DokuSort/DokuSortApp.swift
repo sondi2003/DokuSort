@@ -15,8 +15,6 @@ struct DokuSortApp: App {
     @StateObject private var settings = SettingsStore()
     @StateObject private var catalog = CatalogStore()
     @StateObject private var analysis = AnalysisManager()
-    @StateObject private var watcher = SourceWatcher()
-    @StateObject private var bgAnalyzer = BackgroundAnalyzer()   // << neu
 
     @State private var statusBarController: StatusBarController?
 
@@ -28,18 +26,12 @@ struct DokuSortApp: App {
                 .environmentObject(catalog)
                 .environmentObject(analysis)
                 .onAppear {
-                    // Watcher starten + initial scannen
-                    watcher.startWatching(url: settings.sourceBaseURL)
-                    if settings.sourceBaseURL != nil && store.items.isEmpty {
-                        store.scanSourceFolder(settings.sourceBaseURL)
-                    }
-                    // Hintergrund-Analyzer starten (arbeitet komplette Liste ab)
-                    bgAnalyzer.start(store: store, settings: settings, analysis: analysis)
-
                     // Statusbar-Icon initialisieren
                     if statusBarController == nil {
                         statusBarController = StatusBarController(
-                            store: store, settings: settings, analysis: analysis, watcher: watcher
+                            store: store,
+                            settings: settings,
+                            analysis: analysis
                         )
                     }
 
@@ -48,12 +40,9 @@ struct DokuSortApp: App {
                         WindowManager.shared.registerMainWindow(window)
                     }
                 }
-                .onChange(of: settings.sourceBaseURL) { _, newValue in
-                    watcher.startWatching(url: newValue)
-                    store.scanSourceFolder(newValue)
+                .onChange(of: settings.sourceBaseURL) { _, _ in
+                    store.clear()
                     analysis.reset()
-                    // Nach Quellenwechsel die neue Liste abarbeiten
-                    bgAnalyzer.start(store: store, settings: settings, analysis: analysis)
                 }
         }
     }
