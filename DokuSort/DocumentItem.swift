@@ -15,46 +15,61 @@ struct DocumentItem: Identifiable, Hashable {
     let fileSize: Int64?
     let addedAt: Date
 
-    init(url: URL, fileSize: Int64?) {
-        // WICHTIG: URL sofort normalisieren für konsistente Zuordnung
-        let normalizedURL = url.normalizedFileURL
+    // NEU: Metadaten Felder
+    var date: Date
+    var correspondent: String
+    var tags: [String]
+    var extractedText: String?
 
-        // WICHTIG: Stabile ID basierend auf normalisierter URL generieren
-        // Damit das gleiche Dokument immer die gleiche ID behält, auch nach Store-Scans
+    // Initializer für neue Dateien
+    init(url: URL, fileSize: Int64?) {
+        let normalizedURL = url.normalizedFileURL
         self.id = Self.stableID(for: normalizedURL)
         self.fileName = normalizedURL.lastPathComponent
-        self.fileURL = normalizedURL  // Gespeichert wird die normalisierte URL
+        self.fileURL = normalizedURL
         self.fileSize = fileSize
         self.addedAt = Date()
+        
+        // Standardwerte
+        self.date = Date()
+        self.correspondent = ""
+        self.tags = []
+        self.extractedText = nil
+    }
+
+    // Initializer für Updates (alle Felder explizit setzen)
+    init(id: UUID, fileName: String, fileURL: URL, fileSize: Int64?, addedAt: Date, date: Date, correspondent: String, tags: [String], extractedText: String?) {
+        self.id = id
+        self.fileName = fileName
+        self.fileURL = fileURL
+        self.fileSize = fileSize
+        self.addedAt = addedAt
+        self.date = date
+        self.correspondent = correspondent
+        self.tags = tags
+        self.extractedText = extractedText
     }
 
     /// Generiert eine stabile UUID basierend auf dem normalisierten Dateipfad.
-    /// Stellt sicher, dass das gleiche Dokument immer die gleiche ID hat.
     private static func stableID(for url: URL) -> UUID {
-        // UUID v5: deterministisch basierend auf einem Namespace + Name
         let namespace = UUID(uuidString: "A7B3C5D9-1234-5678-9ABC-DEF012345678")!
         let path = url.normalizedFilePath
         return uuid(namespace: namespace, name: path)
     }
 
-    /// Generiert eine UUID v5 (deterministisch) aus Namespace und Name
     private static func uuid(namespace: UUID, name: String) -> UUID {
         var data = Data()
         withUnsafeBytes(of: namespace.uuid) { data.append(contentsOf: $0) }
         data.append(name.data(using: .utf8)!)
 
-        // SHA1-Hash für UUID v5
         var hash = [UInt8](repeating: 0, count: Int(CC_SHA1_DIGEST_LENGTH))
         data.withUnsafeBytes {
             _ = CC_SHA1($0.baseAddress, CC_LONG(data.count), &hash)
         }
 
-        // UUID v5: Version-Bits auf 0101 (5) setzen
         hash[6] = (hash[6] & 0x0F) | 0x50
-        // Variant-Bits auf 10xx setzen (RFC 4122)
         hash[8] = (hash[8] & 0x3F) | 0x80
 
-        // UUID konstruieren
         let uuid = (
             hash[0], hash[1], hash[2], hash[3],
             hash[4], hash[5], hash[6], hash[7],

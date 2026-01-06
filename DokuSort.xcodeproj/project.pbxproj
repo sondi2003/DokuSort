@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		792D0C822EB243B700E0C989 /* OllamaClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 792D0C812EB243B300E0C989 /* OllamaClient.swift */; };
+		7931304F2F0D9C760034791E /* FoundationModels.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7931304E2F0D9C760034791E /* FoundationModels.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -36,6 +37,7 @@
 /* Begin PBXFileReference section */
 		792D0C532EB23F0800E0C989 /* DokuSort.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DokuSort.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		792D0C812EB243B300E0C989 /* OllamaClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaClient.swift; sourceTree = "<group>"; };
+		7931304E2F0D9C760034791E /* FoundationModels.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = FoundationModels.framework; path = System/Library/Frameworks/FoundationModels.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -51,6 +53,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7931304F2F0D9C760034791E /* FoundationModels.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -62,6 +65,7 @@
 			children = (
 				792D0C812EB243B300E0C989 /* OllamaClient.swift */,
 				792D0C552EB23F0800E0C989 /* DokuSort */,
+				7931304D2F0D9C760034791E /* Frameworks */,
 				792D0C542EB23F0800E0C989 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -72,6 +76,14 @@
 				792D0C532EB23F0800E0C989 /* DokuSort.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		7931304D2F0D9C760034791E /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				7931304E2F0D9C760034791E /* FoundationModels.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -109,7 +121,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2600;
-				LastUpgradeCheck = 2600;
+				LastUpgradeCheck = 2620;
 				TargetAttributes = {
 					792D0C522EB23F0800E0C989 = {
 						CreatedOnToolsVersion = 26.0.1;
@@ -191,6 +203,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = AYHYF92GG5;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -216,6 +229,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -255,6 +269,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = AYHYF92GG5;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -273,6 +288,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 			};
 			name = Release;
@@ -286,6 +302,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1.0.5;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = AYHYF92GG5;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -304,7 +321,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = DokuSort;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
-				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_LSUIElement = NO;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -332,6 +349,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1.0.5;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = AYHYF92GG5;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -350,7 +368,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = DokuSort;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
-				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_LSUIElement = NO;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

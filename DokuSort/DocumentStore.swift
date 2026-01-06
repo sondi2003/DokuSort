@@ -9,40 +9,80 @@ import Foundation
 import UniformTypeIdentifiers
 import Combine
 import Dispatch
-#if os(macOS)
-import Darwin
-#endif
+import SwiftUI
+
+// Hilfsklasse für sicheres Monitoring ohne MainActor-Probleme im deinit
+private final class FolderMonitor {
+    private let source: DispatchSourceFileSystemObject
+    private let fd: CInt
+    private let url: URL
+    
+    // Callback muss thread-safe sein oder auf MainActor dispatched werden
+    init?(url: URL, queue: DispatchQueue, eventHandler: @escaping () -> Void) {
+        let fd = open(url.path, O_EVTONLY)
+        guard fd != -1 else { return nil }
+        
+        self.url = url
+        self.fd = fd
+        
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .extend, .attrib, .link, .rename, .delete],
+            queue: queue
+        )
+        
+        source.setEventHandler(handler: eventHandler)
+        
+        // Cleanup beim Abbrechen
+        source.setCancelHandler {
+            close(fd)
+        }
+        
+        self.source = source
+        source.resume()
+    }
+    
+    deinit {
+        source.cancel()
+    }
+}
 
 @MainActor
 final class DocumentStore: ObservableObject {
     @Published private(set) var items: [DocumentItem] = []
 
-    private var monitorSource: DispatchSourceFileSystemObject?
-    private var monitorFileDescriptor: CInt = -1
-    private var monitorURL: URL?
-    private var monitorSecurityScopeActive = false
+    // Wir halten nur noch eine Referenz auf den Monitor.
+    // Wenn DocumentStore stirbt, stirbt auch monitor und räumt auf.
+    private var folderMonitor: FolderMonitor?
+    private var monitorSecurityScopeURL: URL? // URL die wir "accessen"
+    
     private let monitorQueue = DispatchQueue(label: "ch.rulab.DokuSort.DocumentStore.monitor", qos: .utility)
 
-    private func cleanupMonitoringResources() {
-        if monitorFileDescriptor != -1 {
-            close(monitorFileDescriptor)
-            monitorFileDescriptor = -1
+    // MARK: - CRUD Operations
+    
+    func update(_ item: DocumentItem) {
+        if let index = items.firstIndex(where: { $0.id == item.id }) {
+            items[index] = item
         }
-
-        if monitorSecurityScopeActive {
-            monitorURL?.stopAccessingSecurityScopedResource()
-            monitorSecurityScopeActive = false
+    }
+    
+    func delete(_ item: DocumentItem) {
+        try? FileManager.default.removeItem(at: item.fileURL)
+        if let index = items.firstIndex(where: { $0.id == item.id }) {
+            items.remove(at: index)
         }
-
-        monitorURL = nil
+    }
+    
+    func clear() {
+        items = []
     }
 
-    // App-Dokumente (nutzen wir weiterhin für evtl. manuelle Importe)
+    // MARK: - File Monitoring & Scanning
+
     private var docsDir: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
-    // Bestehend: neu von App-Dokumenten laden (für Undo-Fälle okay)
     func reloadFromDisk() {
         var tmp: [DocumentItem] = []
         if let enumerator = FileManager.default.enumerator(
@@ -60,17 +100,6 @@ final class DocumentStore: ObservableObject {
         self.items = tmp
     }
 
-    /// Entfernt alle geladenen Elemente, z. B. nach Quellenwechsel.
-    func clear() {
-        items = []
-    }
-
-    @MainActor
-    deinit {
-        stopMonitoring()
-    }
-
-    // NEU: Quelle scannen (alle PDFs im Quellordner, Ebene 1)
     func scanSourceFolder(_ source: URL?) {
         guard let source = source?.normalizedFileURL else { self.items = []; return }
         var tmp: [DocumentItem] = []
@@ -80,7 +109,6 @@ final class DocumentStore: ObservableObject {
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) {
             for case let url as URL in enumerator {
-                // nur Top-Level
                 if url.deletingLastPathComponent() != source { continue }
                 if url.pathExtension.lowercased() != "pdf" { continue }
                 let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) }
@@ -92,60 +120,47 @@ final class DocumentStore: ObservableObject {
     }
 
     func startMonitoring(sourceURL: URL?) {
-        stopMonitoring()
+        // Altes Monitoring stoppen
+        folderMonitor = nil
+        if let oldUrl = monitorSecurityScopeURL {
+            oldUrl.stopAccessingSecurityScopedResource()
+            monitorSecurityScopeURL = nil
+        }
 
         guard let sourceURL else { return }
         let normalized = sourceURL.normalizedFileURL
+        
+        // Security Scope öffnen
         let didAccess = normalized.startAccessingSecurityScopedResource()
-
-        let fd = open(normalized.path, O_EVTONLY)
-        guard fd != -1 else {
-            if didAccess { normalized.stopAccessingSecurityScopedResource() }
-            print("⚠️ [DocumentStore] Monitoring konnte nicht gestartet werden – open() fehlgeschlagen")
-            return
+        if didAccess {
+            monitorSecurityScopeURL = normalized
         }
 
-        monitorURL = normalized
-        monitorFileDescriptor = fd
-        monitorSecurityScopeActive = didAccess
-
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd,
-            eventMask: [.write, .extend, .attrib, .link, .rename, .delete],
-            queue: monitorQueue
-        )
-
-        source.setEventHandler { [weak self] in
-            guard let self else { return }
-            let currentURL = self.monitorURL
-            Task { @MainActor in
-                guard
-                    let currentURL,
-                    let activeURL = self.monitorURL,
-                    activeURL.normalizedFileURL == currentURL.normalizedFileURL
-                else { return }
-                self.scanSourceFolder(currentURL)
-            }
-        }
-
-        source.setCancelHandler { [weak self] in
+        // Neuen Monitor erstellen
+        // Der Handler springt zurück auf den MainActor für den Rescan
+        self.folderMonitor = FolderMonitor(url: normalized, queue: monitorQueue) { [weak self] in
             guard let self else { return }
             Task { @MainActor in
-                self.cleanupMonitoringResources()
+                self.scanSourceFolder(normalized)
             }
         }
-
-        monitorSource = source
-        source.resume()
+        
+        if self.folderMonitor == nil && didAccess {
+            // Falls Monitor-Erstellung fehlschlug (z.B. open failed), Scope wieder schließen
+            normalized.stopAccessingSecurityScopedResource()
+            monitorSecurityScopeURL = nil
+            print("⚠️ [DocumentStore] Monitoring konnte nicht gestartet werden.")
+        }
     }
-
+    
     func stopMonitoring() {
-        monitorSource?.cancel()
-        monitorSource = nil
-        cleanupMonitoringResources()
+        folderMonitor = nil
+        if let url = monitorSecurityScopeURL {
+            url.stopAccessingSecurityScopedResource()
+            monitorSecurityScopeURL = nil
+        }
     }
 
-    // Optional: manueller Import (lassen wir drin)
     func importFiles(urls: [URL]) async throws {
         for src in urls {
             guard await src.startAccessingSecurityScopedResourceIfNeeded() else { continue }
@@ -176,10 +191,12 @@ final class DocumentStore: ObservableObject {
         }
         return candidate
     }
-
-    func delete(_ item: DocumentItem) {
-        try? FileManager.default.removeItem(at: item.fileURL)
-        // Beim Löschen aus Quelle danach Quelle neu scannen (der Aufrufer weiss, ob Quelle aktiv ist)
+    
+    deinit {
+        // Hier müssen wir nichts mehr tun, da folderMonitor automatisch deinitialisiert wird
+        // und monitorSecurityScopeURL keinen manuellen clean im deinit erzwingt (URL deinit reicht nicht,
+        // aber stopAccessing... im deinit auf MainActor ist eh verboten.
+        // Best Practice: stopMonitoring() sollte beim Schließen der View/App aufgerufen werden.)
     }
 }
 
@@ -193,4 +210,3 @@ private extension URL {
         if isFileURL { stopAccessingSecurityScopedResource() }
     }
 }
-

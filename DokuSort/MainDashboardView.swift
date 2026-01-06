@@ -13,16 +13,21 @@ import AppKit
 struct MainDashboardView: View {
     @EnvironmentObject private var store: DocumentStore
     @EnvironmentObject private var settings: SettingsStore
-    @EnvironmentObject private var analysis: AnalysisManager
+    // @EnvironmentObject private var analysis: AnalysisManager // Vorerst deaktiviert, da wir den neuen Service nutzen
 
     @State private var selection: DocumentItem?
     @State private var showSettings = false
-    @State private var forceAnalyzeToken = UUID()
-
+    
     // Suche + Filter
     @State private var searchText: String = ""
-    enum StatusFilter: String, CaseIterable, Identifiable { case all = "Alle", pending = "Wartend", analyzed = "Analysiert"
-        var id: String { rawValue } }
+    
+    // Lokale Hilfs-States für die Filterung (da AnalysisManager noch umgebaut wird, nutzen wir die Daten im DocumentItem)
+    enum StatusFilter: String, CaseIterable, Identifiable {
+        case all = "Alle"
+        case pending = "Wartend"
+        case analyzed = "Analysiert"
+        var id: String { rawValue }
+    }
     @State private var statusFilter: StatusFilter = .all
 
     var body: some View {
@@ -53,15 +58,6 @@ struct MainDashboardView: View {
                     }
                 }
                 ToolbarItem {
-                    Button {
-                        forceAnalyzeToken = UUID()
-                    } label: {
-                        Label("Analyse starten", systemImage: "wand.and.stars")
-                    }
-                    .disabled(selection == nil)
-                    .buttonStyle(.borderedProminent)
-                }
-                ToolbarItem {
                     Button { showSettings = true } label: {
                         Label("Einstellungen", systemImage: "gearshape")
                     }
@@ -72,54 +68,9 @@ struct MainDashboardView: View {
             }
             .onAppear {
                 autoSelectFirstIfNeeded()
-            }
-
-            .onAppear {
                 if let window = NSApp.keyWindow {
                     WindowManager.shared.registerMainWindow(window)
                 }
-            }
-            // Analyse-Resultate übernehmen
-            .onReceive(NotificationCenter.default.publisher(for: .documentDidArchive)) { note in
-                if let url = note.object as? URL {
-                    let normalizedURL = url.normalizedFileURL
-                    analysis.remove(url: normalizedURL)
-                    // Store neu scannen nach Ablage
-                    store.scanSourceFolder(settings.sourceBaseURL)
-                    // Selection aktualisieren nach Scan
-                    updateSelectionAfterScan()
-                }
-            }
-
-            .onReceive(NotificationCenter.default.publisher(for: .analysisDidFinish)) { note in
-                guard let url = note.object as? URL else { return }
-                let normalizedURL = url.normalizedFileURL
-
-                if let st = note.userInfo?["state"] as? AnalysisState {
-                    analysis.markAnalyzed(url: normalizedURL, state: st)
-                } else {
-                    // Fallback: aus Persistenz laden
-                    if let st = analysis.state(for: normalizedURL) {
-                        analysis.markAnalyzed(url: normalizedURL, state: st)
-                    }
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .analysisDidFail)) { note in
-                if let url = note.object as? URL {
-                    let normalizedURL = url.normalizedFileURL
-                    analysis.markFailed(url: normalizedURL)
-                }
-            }
-            .onReceive(store.$items) { items in
-                // Bei Änderungen der Items: States neu laden
-                analysis.preloadStates(for: items.map { $0.fileURL })
-                analysis.refreshFromPersistence(for: items.map { $0.fileURL })
-                // Selection aktualisieren nach Store-Änderung
-                updateSelectionAfterScan()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-                let urls = store.items.map { $0.fileURL }
-                analysis.refreshFromPersistence(for: urls)
             }
         }
     }
@@ -128,26 +79,14 @@ struct MainDashboardView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Kopf + Fortschritt
+            // Kopf
             VStack(alignment: .leading, spacing: 8) {
                 Label("Intelligente Verarbeitung", systemImage: "wand.and.stars")
                     .font(.headline)
 
-                let total = store.items.count
-                let ratio = analysis.progress(total: total)
-                HStack(spacing: 8) {
-                    ProgressView(value: ratio)
-                        .progressViewStyle(.linear)
-                        .frame(maxWidth: 180)
-                    Text("\(analysis.analyzedCount)/\(total)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if total > 0 {
-                    Text("Noch \(max(total - analysis.analyzedCount, 0)) in Warteschlange")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                Text("\(store.items.count) Dokumente")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal)
             .padding(.top, 12)
@@ -163,7 +102,7 @@ struct MainDashboardView: View {
             .background(RoundedRectangle(cornerRadius: 8).fill(.bar))
             .padding(.horizontal)
 
-            // Filter (Status)
+            // Filter
             Picker("Status", selection: $statusFilter) {
                 ForEach(StatusFilter.allCases) { f in
                     Text(f.rawValue).tag(f)
@@ -172,7 +111,7 @@ struct MainDashboardView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal)
 
-            // Liste (gefiltert)
+            // Liste
             List(filteredItems, selection: $selection) { item in
                 HStack(spacing: 12) {
                     Image(systemName: "doc.text")
@@ -180,35 +119,30 @@ struct MainDashboardView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.fileName).lineLimit(1)
                         HStack(spacing: 8) {
-                            if let st = analysis.state(for: item.fileURL) {
-                                ConfidenceBar(value: st.confidence)
-                                if let typ = st.dokumenttyp, !typ.isEmpty {
-                                    TypeBadge(typ)
-                                }
-                            } else {
-                                ConfidenceBar(value: 0)
+                            // Anzeige basierend auf neuen Metadaten im DocumentItem
+                            if !item.correspondent.isEmpty {
+                                Text(item.correspondent)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            if !item.tags.isEmpty {
+                                TypeBadge(item.tags.first ?? "")
                             }
                         }
                     }
                     Spacer()
                     Circle()
-                        .fill(analysis.isAnalyzed(item.fileURL) ? .green.opacity(0.85) : .gray.opacity(0.35))
+                        // Grün, wenn Metadaten vorhanden sind
+                        .fill((!item.correspondent.isEmpty) ? .green.opacity(0.85) : .gray.opacity(0.35))
                         .frame(width: 8, height: 8)
-                        .help(analysis.isAnalyzed(item.fileURL) ? "KI-analysiert" : "Wartend")
                 }
+                .tag(item) // Wichtig für Selection
                 .contentShape(Rectangle())
                 .onTapGesture { selection = item }
             }
             .listStyle(.plain)
 
             Spacer()
-
-            HStack {
-                Text("\(filteredItems.count) Treffer").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(.horizontal)
-            .padding(.bottom, 8)
         }
     }
 
@@ -216,23 +150,20 @@ struct MainDashboardView: View {
     private var filteredItems: [DocumentItem] {
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return store.items.filter { item in
-            // Statusfilter
+            // Statusfilter (einfache Logik: hat Korrespondent = analysiert)
+            let isAnalyzed = !item.correspondent.isEmpty
             switch statusFilter {
             case .all:      break
-            case .pending:  if analysis.isAnalyzed(item.fileURL) { return false }
-            case .analyzed: if !analysis.isAnalyzed(item.fileURL) { return false }
+            case .pending:  if isAnalyzed { return false }
+            case .analyzed: if !isAnalyzed { return false }
             }
-            // Textsuche (Dateiname + erkannte Felder)
+            
+            // Textsuche
             if q.isEmpty { return true }
             if item.fileName.lowercased().contains(q) { return true }
-            if let st = analysis.state(for: item.fileURL) {
-                if (st.korrespondent ?? "").lowercased().contains(q) { return true }
-                if (st.dokumenttyp ?? "").lowercased().contains(q) { return true }
-                if let d = st.datum {
-                    let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
-                    if f.string(from: d).contains(q) { return true }
-                }
-            }
+            if item.correspondent.lowercased().contains(q) { return true }
+            if item.tags.contains(where: { $0.lowercased().contains(q) }) { return true }
+            
             return false
         }
     }
@@ -250,27 +181,14 @@ struct MainDashboardView: View {
         }
     }
 
-    // MARK: Rechts: echter Editor
+    // MARK: Rechts: Neuer Editor
 
     private var metadataPanel: some View {
         Group {
             if let sel = selection {
-                MetadataEditorView(
-                    item: sel,
-                    onPrev: { selection = prev(of: sel) },
-                    onNext: { selection = next(of: sel) },
-                    onNextAfterPlacement: { next(of: sel) },
-                    onPostArchiveNext: { candidate in
-                        let target = candidate ?? firstPendingItem()
-                        selection = target
-                        if let doc = target, !analysis.isAnalyzed(doc.fileURL) {
-                            forceAnalyzeToken = UUID()
-                        }
-                    },
-                    embedPreview: false,
-                    forceAnalyzeToken: $forceAnalyzeToken
-                )
-                .id(sel.fileURL)  // WICHTIG: View neu rendern bei URL-Änderung
+                // KORREKTUR: Aufruf an die neue API angepasst
+                MetadataEditorView(item: sel)
+                    .id(sel.id) // Neu rendern bei Wechsel
             } else {
                 placeholder("Bereit", sub: "Sobald ein PDF gewählt ist, erscheinen hier die erkannten Daten.")
             }
@@ -285,46 +203,6 @@ struct MainDashboardView: View {
         }
     }
 
-    /// Aktualisiert die Selection nach einem Store-Scan, um sicherzustellen,
-    /// dass die Selection auf das richtige Item zeigt (auch wenn die UUID sich geändert hat).
-    private func updateSelectionAfterScan() {
-        guard let currentSelection = selection else {
-            // Keine Selection vorhanden, versuche erste Item auszuwählen
-            autoSelectFirstIfNeeded()
-            return
-        }
-
-        // Finde das gleiche Dokument basierend auf der fileURL (normalisiert)
-        let currentURL = currentSelection.fileURL.normalizedFileURL
-        if let matchingItem = store.items.first(where: { $0.fileURL.normalizedFileURL.path == currentURL.path }) {
-            // Dokument noch vorhanden: Selection auf neues Item aktualisieren
-            if matchingItem.id != currentSelection.id {
-                selection = matchingItem
-                print("🔄 [MainDashboard] Selection aktualisiert nach Store-Scan: \(matchingItem.fileName)")
-            }
-        } else {
-            // Dokument nicht mehr vorhanden: erstes Item auswählen
-            selection = store.items.first
-            print("🔄 [MainDashboard] Selection zurückgesetzt (Dokument nicht mehr vorhanden)")
-        }
-    }
-
-    private func next(of item: DocumentItem) -> DocumentItem? {
-        guard let idx = store.items.firstIndex(of: item) else { return nil }
-        let ni = idx + 1
-        return ni < store.items.count ? store.items[ni] : nil
-    }
-
-    private func prev(of item: DocumentItem) -> DocumentItem? {
-        guard let idx = store.items.firstIndex(of: item) else { return nil }
-        let pi = idx - 1
-        return pi >= 0 ? store.items[pi] : nil
-    }
-
-    private func firstPendingItem() -> DocumentItem? {
-        store.items.first { !analysis.isAnalyzed($0.fileURL) }
-    }
-
     private func placeholder(_ title: String, sub: String) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "rectangle.and.text.magnifyingglass").font(.system(size: 40))
@@ -336,21 +214,24 @@ struct MainDashboardView: View {
     }
 }
 
-// Mini-Konfidenz-Balken
-private struct ConfidenceBar: View {
-    var value: Double // 0...1
-    var body: some View {
-        GeometryReader { geo in
-            let w = max(0, min(geo.size.width * value, geo.size.width))
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 3).fill(.gray.opacity(0.2))
-                RoundedRectangle(cornerRadius: 3).fill( value >= 0.7 ? .green.opacity(0.6) : (value >= 0.35 ? .orange.opacity(0.6) : .red.opacity(0.6)) )
-                    .frame(width: w)
-            }
+// MARK: - Helper Views
+
+// Fehlende PDFKitNSView nachgereicht
+struct PDFKitNSView: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> PDFView {
+        let pdfView = PDFView()
+        pdfView.autoScales = true
+        pdfView.displayMode = .singlePageContinuous
+        pdfView.displayDirection = .vertical
+        return pdfView
+    }
+
+    func updateNSView(_ pdfView: PDFView, context: Context) {
+        if pdfView.document?.documentURL != url {
+            pdfView.document = PDFDocument(url: url)
         }
-        .frame(width: 60, height: 6)
-        .clipShape(RoundedRectangle(cornerRadius: 3))
-        .help("Konfidenz: \((Int(value * 100)))%")
     }
 }
 
@@ -363,12 +244,8 @@ private struct TypeBadge: View {
             .font(.caption2)
             .padding(.vertical, 3)
             .padding(.horizontal, 6)
-            .background(
-                Capsule().fill(colorFor(type).opacity(0.18))
-            )
-            .overlay(
-                Capsule().stroke(colorFor(type).opacity(0.35), lineWidth: 0.5)
-            )
+            .background(Capsule().fill(colorFor(type).opacity(0.18)))
+            .overlay(Capsule().stroke(colorFor(type).opacity(0.35), lineWidth: 0.5))
     }
     private func colorFor(_ t: String) -> Color {
         let l = t.lowercased()
@@ -377,8 +254,6 @@ private struct TypeBadge: View {
         if l.contains("police")   { return .green }
         if l.contains("vertrag")  { return .purple }
         if l.contains("offerte")  { return .orange }
-        if l.contains("gutschrift"){ return .teal }
-        if l.contains("liefer")   { return .indigo }
         return .gray
     }
 }
