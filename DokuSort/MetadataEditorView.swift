@@ -13,6 +13,8 @@ struct MetadataEditorView: View {
     
     @EnvironmentObject var store: DocumentStore
     @EnvironmentObject var settings: SettingsStore
+    // NEU: Zugriff auf den Katalog für Vorschläge
+    @EnvironmentObject var catalog: CatalogStore
     
     @State private var datum: Date = Date()
     @State private var korrespondent: String = ""
@@ -58,14 +60,30 @@ struct MetadataEditorView: View {
             
             Section(header: Text("Metadaten")) {
                 DatePicker("Datum", selection: $datum, displayedComponents: .date)
-                TextField("Korrespondent", text: $korrespondent)
-                TextField("Tags / Typ", text: $tags)
+                
+                // NEU: AutoComplete statt normalem TextField
+                AutoCompleteTextField(
+                    title: "Korrespondent",
+                    text: $korrespondent,
+                    suggestions: catalog.correspondents
+                )
+                .zIndex(2) // Wichtig für Overlay-Hierarchie
+                
+                // NEU: AutoComplete für Tags/Typ
+                AutoCompleteTextField(
+                    title: "Tags / Typ",
+                    text: $tags,
+                    suggestions: catalog.tags
+                )
+                .zIndex(1)
                 
                 if !korrespondent.isEmpty {
                     LabeledContent("Vorschau Dateiname", value: previewFilename)
                         .font(.caption).foregroundColor(.secondary)
                 }
             }
+            // Z-Index Reset für nachfolgende Sektionen
+            .zIndex(10)
             
             Section(header: Text("Extrahierter Text (im PDF gespeichert)")) {
                 TextEditor(text: $extractedText)
@@ -97,7 +115,6 @@ struct MetadataEditorView: View {
             PDFPreviewScreen(item: item.fileURL)
         }
         .task(id: item.id) {
-            // Nur analysieren wenn noch keine Metadaten im PDF waren
             let hasMetadata = !item.correspondent.isEmpty || (item.extractedText?.count ?? 0) > 50
             if !hasMetadata {
                  await runSmartAnalysis(forceOCR: false)
@@ -124,7 +141,6 @@ struct MetadataEditorView: View {
         )
         
         if archive {
-            // Erst speichern (ins PDF schreiben), dann verschieben
             store.update(updatedItem)
             performArchiving(item: updatedItem)
         } else {
@@ -156,14 +172,13 @@ struct MetadataEditorView: View {
         isAnalyzing = true
         statusMessage = forceOCR ? "Tiefen-Scan..." : "Analysiere..."
         
-        // NEU: Wir holen uns die Liste der bekannten Firmen
-        let knownCorps = CatalogStore.shared.correspondents
+        let knownCorps = catalog.correspondents // Jetzt direkt aus dem Environment
         
         let config = AnalysisConfig(
             ollamaBaseURL: settings.ollamaBaseURL,
             ollamaModel: settings.ollamaModel,
             ollamaPrompt: settings.ollamaPrompt,
-            knownCorrespondents: knownCorps // <--- Hier übergeben
+            knownCorrespondents: knownCorps
         )
         
         do {
@@ -177,7 +192,6 @@ struct MetadataEditorView: View {
                 self.statusMessage = "Fertig (\(result.source))"
                 self.isAnalyzing = false
                 
-                // Sofort speichern ins PDF
                 let autoSavedItem = DocumentItem(
                     id: item.id, fileName: item.fileName, fileURL: item.fileURL, fileSize: item.fileSize, addedAt: item.addedAt,
                     date: self.datum, correspondent: self.korrespondent, tags: self.tags.split(separator: ",").map{String($0)}, extractedText: self.extractedText
