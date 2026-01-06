@@ -13,251 +13,261 @@ import AppKit
 struct MainDashboardView: View {
     @EnvironmentObject private var store: DocumentStore
     @EnvironmentObject private var settings: SettingsStore
-    // @EnvironmentObject private var analysis: AnalysisManager // Vorerst deaktiviert
-
+    
     @State private var selection: DocumentItem?
-    @State private var showSettings = false
     
     // Suche + Filter
     @State private var searchText: String = ""
-    
     enum StatusFilter: String, CaseIterable, Identifiable {
         case all = "Alle"
-        case pending = "Wartend"
-        case analyzed = "Analysiert"
+        case pending = "Neu"
+        case analyzed = "Fertig"
         var id: String { rawValue }
     }
     @State private var statusFilter: StatusFilter = .all
 
     var body: some View {
-        NavigationStack {
-            HStack(spacing: 0) {
-                sidebar
-                    .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
-                    .background(.thinMaterial)
-
-                Divider()
-
-                preview
-                    .frame(minWidth: 460)
-
-                Divider()
-
-                metadataPanel
-                    .frame(minWidth: 440, idealWidth: 540)
-            }
-            .navigationTitle("DokuSort Dashboard")
-            .toolbar {
-                ToolbarItem {
-                    Button {
-                        store.scanSourceFolder(settings.sourceBaseURL)
-                        // Keine automatische Selektion hier erzwingen,
-                        // das macht onChange(of: store.items) besser
-                    } label: {
-                        Label("Quelle scannen", systemImage: "tray.full")
-                    }
+        // Wir nutzen hier HStack für das 3-Spalten-Layout.
+        // Das ist stabil und sieht mit den Dividern aus wie eine SplitView.
+        HStack(spacing: 0) {
+            // SPALTE 1: SIDEBAR
+            sidebar
+                .frame(minWidth: 260, idealWidth: 300, maxWidth: 350)
+                .background(.ultraThinMaterial) // Der moderne Glass-Look
+            
+            Divider()
+            
+            // SPALTE 2: PREVIEW
+            preview
+                .frame(minWidth: 400)
+            
+            Divider()
+            
+            // SPALTE 3: EDITOR (Metadaten)
+            metadataPanel
+                .frame(minWidth: 350, idealWidth: 400)
+                .background(Color(nsColor: .controlBackgroundColor))
+        }
+        .frame(minWidth: 1000, minHeight: 600)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: {
+                    store.scanSourceFolder(settings.sourceBaseURL)
+                }) {
+                    Label("Aktualisieren", systemImage: "arrow.clockwise")
                 }
-                ToolbarItem {
-                    Button { showSettings = true } label: {
-                        Label("Einstellungen", systemImage: "gearshape")
-                    }
-                }
+                .help("Quelle neu scannen")
             }
-            .sheet(isPresented: $showSettings) {
-                AppSettingsSheet().environmentObject(settings)
+        }
+        .onAppear {
+            if let window = NSApp.keyWindow {
+                WindowManager.shared.registerMainWindow(window)
             }
-            .onAppear {
-                if let window = NSApp.keyWindow {
-                    WindowManager.shared.registerMainWindow(window)
-                }
-                // Initialscan anstoßen, falls nötig
-                if store.items.isEmpty && settings.sourceBaseURL != nil {
-                     store.scanSourceFolder(settings.sourceBaseURL)
-                }
+            if store.items.isEmpty && settings.sourceBaseURL != nil {
+                 store.scanSourceFolder(settings.sourceBaseURL)
             }
-            // WICHTIG: Automatische Selektion beim Start oder nach Löschen
-            .onChange(of: store.items) { oldItems, newItems in
-                handleItemsChange(oldItems: oldItems, newItems: newItems)
-            }
+        }
+        .onChange(of: store.items) { oldItems, newItems in
+            handleItemsChange(oldItems: oldItems, newItems: newItems)
         }
     }
 
-    // MARK: Sidebar
+    // MARK: - Sidebar
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Kopf
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Intelligente Verarbeitung", systemImage: "wand.and.stars")
-                    .font(.headline)
-
-                Text("\(store.items.count) Dokumente")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal)
-            .padding(.top, 12)
-
-            // Suche
-            HStack {
-                Image(systemName: "magnifyingglass")
-                TextField("Dokumente durchsuchen…", text: $searchText)
-                    .textFieldStyle(.plain)
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 8).fill(.bar))
-            .padding(.horizontal)
-
-            // Filter
-            Picker("Status", selection: $statusFilter) {
-                ForEach(StatusFilter.allCases) { f in
-                    Text(f.rawValue).tag(f)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
-
-            // Liste
-            List(filteredItems, selection: $selection) { item in
-                HStack(spacing: 12) {
-                    Image(systemName: "doc.text")
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.fileName).lineLimit(1)
-                        HStack(spacing: 8) {
-                            if !item.correspondent.isEmpty {
-                                Text(item.correspondent)
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                            if !item.tags.isEmpty {
-                                TypeBadge(item.tags.first ?? "")
-                            }
-                        }
-                    }
+        VStack(spacing: 0) {
+            // Header Area
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Image(systemName: "tray.full.fill")
+                        .font(.title2)
+                        .foregroundStyle(.blue)
+                    Text("Eingang")
+                        .font(.title2)
+                        .fontWeight(.semibold)
                     Spacer()
-                    Circle()
-                        .fill((!item.correspondent.isEmpty) ? .green.opacity(0.85) : .gray.opacity(0.35))
-                        .frame(width: 8, height: 8)
+                    Text("\(store.items.count)")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(.quaternary)
+                        .clipShape(Capsule())
                 }
-                .tag(item)
-                .contentShape(Rectangle())
-                .onTapGesture { selection = item }
-            }
-            .listStyle(.plain)
+                .padding(.top, 20)
+                .padding(.horizontal)
+                
+                // Search Bar (Custom Look)
+                HStack {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Suchen...", text: $searchText)
+                        .textFieldStyle(.plain)
+                }
+                .padding(8)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(8)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.2)))
+                .padding(.horizontal)
 
-            Spacer()
+                // Filter Segmented Control
+                Picker("", selection: $statusFilter) {
+                    ForEach(StatusFilter.allCases) { f in
+                        Text(f.rawValue).tag(f)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.bottom, 10)
+            }
+            
+            Divider()
+
+            // List Area
+            List(filteredItems, selection: $selection) { item in
+                DocumentRowView(item: item)
+                    .tag(item)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(selection == item ? Color.accentColor.opacity(0.15) : Color.clear)
+                            .padding(.vertical, 2)
+                            .padding(.horizontal, 4)
+                    )
+            }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
         }
     }
 
-    // Gefilterte Items
+    // MARK: - Content Views
+
+    private var preview: some View {
+        ZStack {
+            Color(nsColor: .underPageBackgroundColor)
+            if let sel = selection {
+                PDFKitNSView(url: sel.fileURL)
+                    .id(sel.id)
+                    .shadow(radius: 5)
+                    .padding()
+            } else {
+                ContentUnavailableView("Kein Dokument ausgewählt", systemImage: "doc.text.magnifyingglass")
+            }
+        }
+    }
+
+    private var metadataPanel: some View {
+        Group {
+            if let sel = selection {
+                MetadataEditorView(item: sel)
+                    .id(sel.id)
+            } else {
+                ZStack {
+                    Color(nsColor: .controlBackgroundColor)
+                    Text("Wähle ein Dokument für Details")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    // MARK: - Logic Helpers
+
     private var filteredItems: [DocumentItem] {
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return store.items.filter { item in
-            // Statusfilter
             let isAnalyzed = !item.correspondent.isEmpty
             switch statusFilter {
             case .all:      break
             case .pending:  if isAnalyzed { return false }
             case .analyzed: if !isAnalyzed { return false }
             }
-            
-            // Textsuche
             if q.isEmpty { return true }
             if item.fileName.lowercased().contains(q) { return true }
             if item.correspondent.lowercased().contains(q) { return true }
             if item.tags.contains(where: { $0.lowercased().contains(q) }) { return true }
-            
             return false
         }
     }
-
-    // MARK: Mitte
-
-    private var preview: some View {
-        Group {
-            if let sel = selection {
-                PDFKitNSView(url: sel.fileURL)
-                    .background(Color(nsColor: .underPageBackgroundColor))
-                    .id(sel.id) // Erzwingt Neuladen bei Wechsel
-            } else {
-                placeholder("Kein Dokument", sub: "Alles erledigt! 🎉")
-            }
-        }
-    }
-
-    // MARK: Rechts: Neuer Editor
-
-    private var metadataPanel: some View {
-        Group {
-            if let sel = selection {
-                MetadataEditorView(item: sel)
-                    .id(sel.id) // Neu rendern bei Wechsel
-            } else {
-                placeholder("Bereit", sub: "Sobald ein PDF gewählt ist, erscheinen hier die erkannten Daten.")
-            }
-        }
-    }
-
-    // MARK: Helpers
-
+    
     private func handleItemsChange(oldItems: [DocumentItem], newItems: [DocumentItem]) {
-        // Fall 1: Liste ist leer geworden -> Selection löschen
         if newItems.isEmpty {
             selection = nil
             return
         }
-
-        // Fall 2: Wir haben eine Selection, prüfen ob sie noch gültig ist
         if let currentSel = selection {
-            // Ist das selektierte Item noch in der neuen Liste?
             if newItems.contains(where: { $0.id == currentSel.id }) {
-                // Ja, alles gut. (Ggf. Metadaten-Update, aber Selection bleibt)
-                // Wir updaten `selection` mit dem neuesten Objekt aus `newItems` (wichtig für Metadaten-Refresh)
                 if let updatedItem = newItems.first(where: { $0.id == currentSel.id }) {
                     selection = updatedItem
                 }
                 return
             } else {
-                // Nein, es wurde gelöscht/archiviert!
-                // Wir müssen das NÄCHSTE Item finden.
-                
-                // Wir suchen den Index des alten Items in der ALTEN Liste
                 if let oldIndex = oldItems.firstIndex(where: { $0.id == currentSel.id }) {
-                    // Wir versuchen, den gleichen Index in der NEUEN Liste zu nehmen
-                    // Da das Item weg ist, rutschen alle nach -> gleicher Index ist das "nächste" Element
                     if oldIndex < newItems.count {
                         selection = newItems[oldIndex]
                     } else if !newItems.isEmpty {
-                        // Wenn wir das letzte Element gelöscht haben, nehmen wir das nun letzte Element
                         selection = newItems.last
                     } else {
                         selection = nil
                     }
                 } else {
-                    // Fallback: Einfach das erste nehmen
                     selection = newItems.first
                 }
             }
         } else {
-            // Fall 3: Keine Selection, aber Items vorhanden -> Erstes wählen
             selection = newItems.first
         }
     }
-
-    private func placeholder(_ title: String, sub: String) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: "rectangle.and.text.magnifyingglass").font(.system(size: 40))
-            Text(title).font(.headline)
-            Text(sub).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .underPageBackgroundColor))
-    }
 }
 
-// MARK: - Helper Views
+// MARK: - Subviews
+
+struct DocumentRowView: View {
+    let item: DocumentItem
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(item.fileName)
+                    .font(.body)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                if !item.correspondent.isEmpty {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .font(.caption)
+                }
+            }
+            
+            HStack {
+                if !item.correspondent.isEmpty {
+                    Text(item.correspondent)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Neu / Unbekannt")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                
+                Spacer()
+                
+                if let tag = item.tags.first {
+                    Text(tag.uppercased())
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.1))
+                        .foregroundStyle(Color.accentColor)
+                        .cornerRadius(4)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
 
 struct PDFKitNSView: NSViewRepresentable {
     let url: URL
@@ -267,6 +277,7 @@ struct PDFKitNSView: NSViewRepresentable {
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
+        pdfView.backgroundColor = .clear
         return pdfView
     }
 
@@ -274,27 +285,5 @@ struct PDFKitNSView: NSViewRepresentable {
         if pdfView.document?.documentURL != url {
             pdfView.document = PDFDocument(url: url)
         }
-    }
-}
-
-private struct TypeBadge: View {
-    let type: String
-    init(_ t: String) { self.type = t }
-    var body: some View {
-        Text(type)
-            .font(.caption2)
-            .padding(.vertical, 3)
-            .padding(.horizontal, 6)
-            .background(Capsule().fill(colorFor(type).opacity(0.18)))
-            .overlay(Capsule().stroke(colorFor(type).opacity(0.35), lineWidth: 0.5))
-    }
-    private func colorFor(_ t: String) -> Color {
-        let l = t.lowercased()
-        if l.contains("rechnung") { return .blue }
-        if l.contains("mahnung")  { return .red }
-        if l.contains("police")   { return .green }
-        if l.contains("vertrag")  { return .purple }
-        if l.contains("offerte")  { return .orange }
-        return .gray
     }
 }

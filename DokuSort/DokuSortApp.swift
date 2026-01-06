@@ -20,48 +20,73 @@ struct DokuSortApp: App {
     @State private var didInitializeSourceScan = false
 
     var body: some Scene {
+        // 1. Das Hauptfenster
         WindowGroup {
             MainDashboardView()
                 .environmentObject(store)
                 .environmentObject(settings)
                 .environmentObject(catalog)
-                .environmentObject(analysis)
+                .environmentObject(analysis) // Optional, falls noch genutzt
                 .onAppear {
-                    // Statusbar-Icon initialisieren
-                    if statusBarController == nil {
-                        statusBarController = StatusBarController(
-                            store: store,
-                            settings: settings,
-                            analysis: analysis
-                        )
-                    }
-
-                    // Hauptfenster fuer "Hauptfenster oeffnen" registrieren
-                    if let window = NSApp.keyWindow ?? NSApp.windows.first {
-                        WindowManager.shared.registerMainWindow(window)
-                    }
-
-                    if didInitializeSourceScan == false {
-                        didInitializeSourceScan = true
-                        let sourceURL = settings.sourceBaseURL
-                        store.scanSourceFolder(sourceURL)
-                        store.startMonitoring(sourceURL: sourceURL)
-                        let urls = store.items.map { $0.fileURL }
-                        analysis.preloadStates(for: urls)
-                        analysis.refreshFromPersistence(for: urls)
-                    }
+                    setupApp()
                 }
                 .onChange(of: settings.sourceBaseURL) { _, newValue in
-                    store.stopMonitoring()
-                    analysis.reset()
-                    store.scanSourceFolder(newValue)
-                    if let newValue {
-                        store.startMonitoring(sourceURL: newValue)
-                    }
-                    let urls = store.items.map { $0.fileURL }
-                    analysis.preloadStates(for: urls)
-                    analysis.refreshFromPersistence(for: urls)
+                    rescan(newValue)
                 }
         }
+        .commands {
+            // Fügt Standard-Sidebar-Befehle hinzu (Ansicht -> Seitenleiste ein/aus)
+            SidebarCommands()
+        }
+
+        // 2. Das native Einstellungsfenster (CMD+,)
+        Settings {
+            SettingsView()
+                .environmentObject(settings)
+                .environmentObject(catalog)
+        }
+    }
+    
+    // MARK: - App Logic Helpers
+    
+    private func setupApp() {
+        // Statusbar
+        if statusBarController == nil {
+            statusBarController = StatusBarController(
+                store: store,
+                settings: settings,
+                analysis: analysis
+            )
+        }
+
+        // Hauptfenster-Registrierung
+        if let window = NSApp.keyWindow ?? NSApp.windows.first {
+            WindowManager.shared.registerMainWindow(window)
+        }
+
+        // Initial Scan
+        if didInitializeSourceScan == false {
+            didInitializeSourceScan = true
+            let sourceURL = settings.sourceBaseURL
+            store.scanSourceFolder(sourceURL)
+            store.startMonitoring(sourceURL: sourceURL)
+            
+            // Analysis-Preload (für alte Sidebar-Anzeige)
+            let urls = store.items.map { $0.fileURL }
+            analysis.preloadStates(for: urls)
+            analysis.refreshFromPersistence(for: urls)
+        }
+    }
+    
+    private func rescan(_ url: URL?) {
+        store.stopMonitoring()
+        analysis.reset()
+        store.scanSourceFolder(url)
+        if let url {
+            store.startMonitoring(sourceURL: url)
+        }
+        let urls = store.items.map { $0.fileURL }
+        analysis.preloadStates(for: urls)
+        analysis.refreshFromPersistence(for: urls)
     }
 }
