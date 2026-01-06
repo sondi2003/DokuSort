@@ -40,9 +40,22 @@
 		7931304E2F0D9C760034791E /* FoundationModels.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = FoundationModels.framework; path = System/Library/Frameworks/FoundationModels.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		793130572F0DA7540034791E /* Exceptions for "DokuSort" folder in "DokuSort" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Untitled.swift,
+			);
+			target = 792D0C522EB23F0800E0C989 /* DokuSort */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		792D0C552EB23F0800E0C989 /* DokuSort */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				793130572F0DA7540034791E /* Exceptions for "DokuSort" folder in "DokuSort" target */,
+			);
 			path = DokuSort;
 			sourceTree = "<group>";
 		};

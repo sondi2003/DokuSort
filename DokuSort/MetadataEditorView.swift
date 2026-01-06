@@ -156,10 +156,14 @@ struct MetadataEditorView: View {
         isAnalyzing = true
         statusMessage = forceOCR ? "Tiefen-Scan..." : "Analysiere..."
         
+        // NEU: Wir holen uns die Liste der bekannten Firmen
+        let knownCorps = CatalogStore.shared.correspondents
+        
         let config = AnalysisConfig(
             ollamaBaseURL: settings.ollamaBaseURL,
             ollamaModel: settings.ollamaModel,
-            ollamaPrompt: settings.ollamaPrompt
+            ollamaPrompt: settings.ollamaPrompt,
+            knownCorrespondents: knownCorps // <--- Hier übergeben
         )
         
         do {

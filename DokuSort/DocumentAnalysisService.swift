@@ -9,11 +9,12 @@ import Foundation
 import PDFKit
 import Vision
 
-/// Kleines Hilfs-Struct, um Settings thread-safe zu übergeben
 struct AnalysisConfig {
     let ollamaBaseURL: String
     let ollamaModel: String
     let ollamaPrompt: String
+    // NEU: Bekannte Entitäten für Context Injection
+    let knownCorrespondents: [String]
 }
 
 actor DocumentAnalysisService {
@@ -24,26 +25,42 @@ actor DocumentAnalysisService {
         let source: String
     }
     
-    // NEU: Parameter 'forceOCR'
     func analyze(
         item: DocumentItem,
         config: AnalysisConfig,
         forceOCR: Bool = false
     ) async throws -> AnalysisResult {
         
-        // 1. Text extrahieren (mit Force-Option)
+        // 1. Text extrahieren
         let text = await extractBestText(from: item.fileURL, forceOCR: forceOCR)
         guard !text.isEmpty else {
             throw NSError(domain: "Analysis", code: -1, userInfo: [NSLocalizedDescriptionKey: "Kein Text konnte extrahiert werden."])
         }
         
-        // 2. Priorität 1: Apple Intelligence
+        // 2. Prompt anreichern (Context Injection)
+        var enrichedPrompt = config.ollamaPrompt
+        if !config.knownCorrespondents.isEmpty {
+            let list = config.knownCorrespondents.prefix(50).joined(separator: ", ") // Limitieren, um Token zu sparen
+            let contextHint = """
+            
+            HINWEIS: Hier ist eine Liste bekannter Korrespondenten (wähle einen davon, falls passend, sonst nimm den aus dem Text):
+            [\(list)]
+            
+            """
+            // Wir fügen den Hinweis VOR dem Platzhalter {TEXT} ein
+            enrichedPrompt = enrichedPrompt.replacingOccurrences(of: "{TEXT}", with: "\(contextHint)\n{TEXT}")
+        } else {
+             // Standard Ersetzung falls Liste leer
+             enrichedPrompt = enrichedPrompt.replacingOccurrences(of: "{TEXT}", with: "{TEXT}")
+        }
+        
+        // 3. Priorität 1: Apple Intelligence
         let aiStatus = await AppleIntelligenceClient.checkAvailability()
         if aiStatus.available {
             do {
                 let suggestion = try await AppleIntelligenceClient.suggest(
                     from: text,
-                    promptTemplate: config.ollamaPrompt
+                    promptTemplate: enrichedPrompt
                 )
                 return AnalysisResult(text: text, suggestion: suggestion, source: "Apple Intelligence")
             } catch {
@@ -51,14 +68,14 @@ actor DocumentAnalysisService {
             }
         }
         
-        // 3. Priorität 2: Ollama
+        // 4. Priorität 2: Ollama
         if !config.ollamaBaseURL.isEmpty && !config.ollamaModel.isEmpty {
             do {
                 let suggestion = try await OllamaClient.suggest(
                     from: text,
                     baseURL: config.ollamaBaseURL,
                     model: config.ollamaModel,
-                    promptTemplate: config.ollamaPrompt
+                    promptTemplate: enrichedPrompt
                 )
                 return AnalysisResult(text: text, suggestion: suggestion, source: "Ollama (\(config.ollamaModel))")
             } catch {
@@ -66,7 +83,7 @@ actor DocumentAnalysisService {
             }
         }
         
-        // 4. Priorität 3: Heuristik
+        // 5. Priorität 3: Heuristik
         let fallbackSuggestion = OCRService.suggest(fromText: text)
         return AnalysisResult(text: text, suggestion: fallbackSuggestion, source: "Regelbasiert")
     }
@@ -74,13 +91,11 @@ actor DocumentAnalysisService {
     // MARK: - Helper
     
     private func extractBestText(from url: URL, forceOCR: Bool) async -> String {
-        // Wenn forceOCR true ist, überspringen wir den schnellen PDF-Text Check
         if !forceOCR, let pdfText = extractPDFString(from: url), pdfText.count > 50 {
             print("📄 [Extraction] Nutze existierenden PDF-Text.")
             return pdfText
         }
-        
-        print("👁️ [Extraction] Erzwinge Vision OCR (oder kein Text vorhanden)...")
+        print("👁️ [Extraction] Erzwinge Vision OCR...")
         if let ocrText = try? await OCRService.recognizeFullText(pdfURL: url) {
             return ocrText
         }

@@ -2,7 +2,7 @@
 //  CatalogStore.swift
 //  DokuSort
 //
-//  Created by Richard Sonderegger on 29.10.2025.
+//  Created by DokuSort AI on 06.01.2026.
 //
 
 import Foundation
@@ -10,224 +10,83 @@ import Combine
 
 @MainActor
 final class CatalogStore: ObservableObject {
-    struct KorrespondentResolution {
-        enum Decision {
-            case empty
-            case partial
-            case newCanonical
-            case existingCanonical(name: String)
-            case aliasMapped(to: String)
-            case fuzzyMapped(to: String, score: Double)
-            case folderMapped(to: String, score: Double)
-        }
-
-        let canonical: String
-        let displayName: String
-        let decision: Decision
-    }
-
-    @Published private(set) var korrespondenten: [String] = []
-    @Published private(set) var dokumenttypen: [String] = []
-    @Published private(set) var korrespondentAliases: [String: String] = [:]
-
-    private let korKey = "CatalogStore.korrespondenten"
-    private let typKey = "CatalogStore.dokumenttypen"
-    private let aliasKey = "CatalogStore.korrespondentAliases"
-
+    static let shared = CatalogStore()
+    
+    @Published private(set) var correspondents: [String] = []
+    @Published private(set) var tags: [String] = [] // In der UI als "Dokumenttypen" verwendet
+    
+    private let correspondentsKey = "Catalog_Correspondents"
+    private let tagsKey = "Catalog_Tags"
+    
     init() {
         load()
     }
-
-    func load() {
-        let d = UserDefaults.standard
-        korrespondenten = d.stringArray(forKey: korKey) ?? []
-        dokumenttypen = d.stringArray(forKey: typKey) ?? []
-        korrespondentAliases = d.dictionary(forKey: aliasKey) as? [String: String] ?? [:]
-    }
-
-    @discardableResult
-    func resolveKorrespondent(_ value: String, existingFolders: [String] = []) -> KorrespondentResolution {
-        let trimmed = CorrespondentNormalizer.prettyDisplayName(from: value)
-        guard !trimmed.isEmpty else {
-            return KorrespondentResolution(canonical: "", displayName: "", decision: .empty)
-        }
-
-        // zu kurze Eingaben nicht sofort übernehmen (sonst entsteht beim Tippen zu viel Rauschen)
-        if trimmed.count < 3 {
-            return KorrespondentResolution(canonical: trimmed, displayName: trimmed, decision: .partial)
-        }
-
-        let key = CorrespondentNormalizer.normalizedKey(for: trimmed)
-        if key.count < 3 {
-            return KorrespondentResolution(canonical: trimmed, displayName: trimmed, decision: .partial)
-        }
-
-        func containsCaseInsensitive(_ array: [String], _ value: String) -> Bool {
-            array.contains { $0.caseInsensitiveCompare(value) == .orderedSame }
-        }
-
-        let canonicalCandidates: [String]
-        let additionalCandidates: [String]
-        if existingFolders.isEmpty {
-            canonicalCandidates = korrespondenten
-            additionalCandidates = []
-        } else {
-            canonicalCandidates = existingFolders
-            additionalCandidates = korrespondenten.filter { !containsCaseInsensitive(existingFolders, $0) }
-        }
-
-        if let existing = korrespondentAliases[key] {
-            if containsCaseInsensitive(canonicalCandidates, existing) || containsCaseInsensitive(additionalCandidates, existing) {
-                return KorrespondentResolution(canonical: existing, displayName: existing, decision: .aliasMapped(to: existing))
-            } else {
-                korrespondentAliases.removeValue(forKey: key)
-                save()
-            }
-        }
-
-        let directSources = canonicalCandidates + additionalCandidates
-        if let direct = directSources.first(where: { CorrespondentNormalizer.normalizedKey(for: $0) == key }) {
-            registerKorrespondent(direct)
-            korrespondentAliases[key] = direct
-            save()
-            return KorrespondentResolution(canonical: direct, displayName: direct, decision: .existingCanonical(name: direct))
-        }
-
-        var bestCandidate: (name: String, bigram: Double, keyScore: Double, fromFolder: Bool)? = nil
-
-        func considerCandidate(_ candidate: String, fromFolder: Bool) {
-            let bigramScore = CorrespondentNormalizer.similarity(between: trimmed, and: candidate)
-            let candidateKey = CorrespondentNormalizer.normalizedKey(for: candidate)
-            let keyScore = CorrespondentNormalizer.normalizedKeySimilarity(betweenNormalized: key, andNormalized: candidateKey)
-            let combined = max(bigramScore, keyScore)
-            guard combined > (bestCandidate.map { max($0.bigram, $0.keyScore) } ?? -1) else { return }
-
-            if let current = bestCandidate, combined == max(current.bigram, current.keyScore) {
-                if keyScore <= current.keyScore { return }
-            }
-
-            bestCandidate = (candidate, bigramScore, keyScore, fromFolder)
-        }
-
-        canonicalCandidates.forEach { considerCandidate($0, fromFolder: true) }
-        additionalCandidates.forEach { considerCandidate($0, fromFolder: false) }
-
-        if let best = bestCandidate {
-            let combinedScore = max(best.bigram, best.keyScore)
-            if best.bigram >= 0.82 || best.keyScore >= 0.9 {
-                registerKorrespondent(best.name)
-                korrespondentAliases[key] = best.name
-                save()
-                if best.fromFolder {
-                    return KorrespondentResolution(
-                        canonical: best.name,
-                        displayName: best.name,
-                        decision: .folderMapped(to: best.name, score: combinedScore)
-                    )
-                } else {
-                    return KorrespondentResolution(
-                        canonical: best.name,
-                        displayName: best.name,
-                        decision: .fuzzyMapped(to: best.name, score: combinedScore)
-                    )
-                }
-            }
-        }
-
-        let canonical = trimmed
-        registerKorrespondent(canonical)
-        korrespondentAliases[key] = canonical
-        save()
-        return KorrespondentResolution(canonical: canonical, displayName: canonical, decision: .newCanonical)
-    }
-
-    func addDokumenttyp(_ value: String) {
-        let cleaned = CorrespondentNormalizer.prettyDisplayName(from: value)
-        guard !cleaned.isEmpty else { return }
-        if !dokumenttypen.contains(where: { $0.caseInsensitiveCompare(cleaned) == .orderedSame }) {
-            dokumenttypen.append(cleaned)
+    
+    // MARK: - Correspondents
+    
+    func addCorrespondent(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        
+        if !correspondents.contains(where: { $0.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) {
+            correspondents.append(trimmed)
+            correspondents.sort()
             save()
         }
     }
-
-    // MARK: Management Methods
-
-    func addKorrespondent(_ value: String) {
-        let cleaned = CorrespondentNormalizer.prettyDisplayName(from: value)
-        guard !cleaned.isEmpty else { return }
-        registerKorrespondent(cleaned)
+    
+    func deleteCorrespondent(at index: Int) { // Fehlte vorher
+        guard correspondents.indices.contains(index) else { return }
+        correspondents.remove(at: index)
         save()
     }
-
-    func deleteKorrespondent(at index: Int) {
-        guard index >= 0 && index < korrespondenten.count else { return }
-        let removed = korrespondenten.remove(at: index)
-        // Remove aliases pointing to this korrespondent
-        let key = CorrespondentNormalizer.normalizedKey(for: removed)
-        korrespondentAliases.removeValue(forKey: key)
-        // Remove any other aliases pointing to this korrespondent
-        korrespondentAliases = korrespondentAliases.filter { $0.value != removed }
-        save()
-    }
-
-    func editKorrespondent(at index: Int, newValue: String) {
-        guard index >= 0 && index < korrespondenten.count else { return }
-        let cleaned = CorrespondentNormalizer.prettyDisplayName(from: newValue)
-        guard !cleaned.isEmpty else { return }
-        let oldValue = korrespondenten[index]
-        korrespondenten[index] = cleaned
-        // Update aliases
-        let oldKey = CorrespondentNormalizer.normalizedKey(for: oldValue)
-        let newKey = CorrespondentNormalizer.normalizedKey(for: cleaned)
-        if korrespondentAliases[oldKey] == oldValue {
-            korrespondentAliases.removeValue(forKey: oldKey)
-        }
-        korrespondentAliases[newKey] = cleaned
-        // Update any other aliases pointing to old value
-        for (key, value) in korrespondentAliases where value == oldValue {
-            korrespondentAliases[key] = cleaned
-        }
-        save()
-    }
-
-    func deleteDokumenttyp(at index: Int) {
-        guard index >= 0 && index < dokumenttypen.count else { return }
-        dokumenttypen.remove(at: index)
-        save()
-    }
-
-    func editDokumenttyp(at index: Int, newValue: String) {
-        guard index >= 0 && index < dokumenttypen.count else { return }
-        let cleaned = CorrespondentNormalizer.prettyDisplayName(from: newValue)
-        guard !cleaned.isEmpty else { return }
-        dokumenttypen[index] = cleaned
-        save()
-    }
-
-    func suggestions(for input: String, in kind: Kind, limit: Int = 8) -> [String] {
-        let source = (kind == .korrespondent) ? korrespondenten : dokumenttypen
-        let needle = input.lowercased()
-        guard !needle.isEmpty else { return Array(source.prefix(limit)) }
-        // Prefix bevorzugen, sonst Substring
-        let prefix = source.filter { $0.lowercased().hasPrefix(needle) }
-        if prefix.count >= limit { return Array(prefix.prefix(limit)) }
-        let rest = source.filter { $0.lowercased().contains(needle) && !$0.lowercased().hasPrefix(needle) }
-        return Array((prefix + rest).prefix(limit))
-    }
-
-    private func registerKorrespondent(_ value: String) {
-        guard !value.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        if !korrespondenten.contains(where: { $0.caseInsensitiveCompare(value) == .orderedSame }) {
-            korrespondenten.append(value)
+    
+    func deleteCorrespondent(_ name: String) { // Optional: Löschen nach Name
+        if let index = correspondents.firstIndex(of: name) {
+            correspondents.remove(at: index)
+            save()
         }
     }
-
+    
+    // MARK: - Tags / Dokumenttypen
+    
+    func addTags(_ newTags: [String]) {
+        var changed = false
+        for tag in newTags {
+            let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            
+            if !tags.contains(where: { $0.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) {
+                tags.append(trimmed)
+                changed = true
+            }
+        }
+        if changed {
+            tags.sort()
+            save()
+        }
+    }
+    
+    // Einzelnen Tag hinzufügen (für UI)
+    func addTag(_ name: String) {
+        addTags([name])
+    }
+    
+    func deleteTag(at index: Int) { // Fehlte vorher
+        guard tags.indices.contains(index) else { return }
+        tags.remove(at: index)
+        save()
+    }
+    
+    // MARK: - Persistence
+    
     private func save() {
-        let d = UserDefaults.standard
-        d.set(korrespondenten, forKey: korKey)
-        d.set(dokumenttypen, forKey: typKey)
-        d.set(korrespondentAliases, forKey: aliasKey)
+        UserDefaults.standard.set(correspondents, forKey: correspondentsKey)
+        UserDefaults.standard.set(tags, forKey: tagsKey)
     }
-
-    enum Kind { case korrespondent, dokumenttyp }
+    
+    private func load() {
+        self.correspondents = UserDefaults.standard.stringArray(forKey: correspondentsKey) ?? []
+        self.tags = UserDefaults.standard.stringArray(forKey: tagsKey) ?? []
+    }
 }

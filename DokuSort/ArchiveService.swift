@@ -35,6 +35,8 @@ final class ArchiveService {
         return "\(dateStr)_\(safeKorr)_\(safeType).pdf"
     }
     
+    // WICHTIG: Das muss nun auf dem MainActor laufen, um den CatalogStore zu updaten
+    @MainActor
     static func archive(
         item: DocumentItem,
         destinationFolder: URL,
@@ -43,7 +45,11 @@ final class ArchiveService {
         // 1. Validierung
         guard !item.correspondent.isEmpty else { throw ArchiveError.missingMetadata }
         
-        // 2. Ordnerstruktur erstellen
+        // 2. LERNEN: Wir füttern das Gehirn
+        CatalogStore.shared.addCorrespondent(item.correspondent)
+        CatalogStore.shared.addTags(item.tags)
+        
+        // 3. Ordnerstruktur erstellen
         let safeCorrespondent = sanitize(item.correspondent)
         var targetDir = destinationFolder.appendingPathComponent(safeCorrespondent, isDirectory: true)
         try createDir(targetDir)
@@ -54,7 +60,7 @@ final class ArchiveService {
             try createDir(targetDir)
         }
         
-        // 3. Zielnamen generieren
+        // 4. Zielnamen generieren
         let newFilename = generateFilename(for: item)
         var destinationURL = targetDir.appendingPathComponent(newFilename)
         
@@ -66,10 +72,8 @@ final class ArchiveService {
             counter += 1
         }
         
-        // 4. Verschieben
+        // 5. Verschieben
         do {
-            // Hinweis: Da die Metadaten bereits im DocumentStore.update() IN das PDF geschrieben wurden,
-            // reicht ein einfaches moveItem. Die Metadaten wandern mit.
             try FileManager.default.moveItem(at: item.fileURL, to: destinationURL)
             print("✅ [Archive] Verschoben nach: \(destinationURL.path)")
             return destinationURL

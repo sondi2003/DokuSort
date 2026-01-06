@@ -13,7 +13,7 @@ import AppKit
 struct MainDashboardView: View {
     @EnvironmentObject private var store: DocumentStore
     @EnvironmentObject private var settings: SettingsStore
-    // @EnvironmentObject private var analysis: AnalysisManager // Vorerst deaktiviert, da wir den neuen Service nutzen
+    // @EnvironmentObject private var analysis: AnalysisManager // Vorerst deaktiviert
 
     @State private var selection: DocumentItem?
     @State private var showSettings = false
@@ -21,7 +21,6 @@ struct MainDashboardView: View {
     // Suche + Filter
     @State private var searchText: String = ""
     
-    // Lokale Hilfs-States für die Filterung (da AnalysisManager noch umgebaut wird, nutzen wir die Daten im DocumentItem)
     enum StatusFilter: String, CaseIterable, Identifiable {
         case all = "Alle"
         case pending = "Wartend"
@@ -52,7 +51,8 @@ struct MainDashboardView: View {
                 ToolbarItem {
                     Button {
                         store.scanSourceFolder(settings.sourceBaseURL)
-                        autoSelectFirstIfNeeded()
+                        // Keine automatische Selektion hier erzwingen,
+                        // das macht onChange(of: store.items) besser
                     } label: {
                         Label("Quelle scannen", systemImage: "tray.full")
                     }
@@ -67,10 +67,17 @@ struct MainDashboardView: View {
                 AppSettingsSheet().environmentObject(settings)
             }
             .onAppear {
-                autoSelectFirstIfNeeded()
                 if let window = NSApp.keyWindow {
                     WindowManager.shared.registerMainWindow(window)
                 }
+                // Initialscan anstoßen, falls nötig
+                if store.items.isEmpty && settings.sourceBaseURL != nil {
+                     store.scanSourceFolder(settings.sourceBaseURL)
+                }
+            }
+            // WICHTIG: Automatische Selektion beim Start oder nach Löschen
+            .onChange(of: store.items) { oldItems, newItems in
+                handleItemsChange(oldItems: oldItems, newItems: newItems)
             }
         }
     }
@@ -119,7 +126,6 @@ struct MainDashboardView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.fileName).lineLimit(1)
                         HStack(spacing: 8) {
-                            // Anzeige basierend auf neuen Metadaten im DocumentItem
                             if !item.correspondent.isEmpty {
                                 Text(item.correspondent)
                                     .font(.caption2)
@@ -132,11 +138,10 @@ struct MainDashboardView: View {
                     }
                     Spacer()
                     Circle()
-                        // Grün, wenn Metadaten vorhanden sind
                         .fill((!item.correspondent.isEmpty) ? .green.opacity(0.85) : .gray.opacity(0.35))
                         .frame(width: 8, height: 8)
                 }
-                .tag(item) // Wichtig für Selection
+                .tag(item)
                 .contentShape(Rectangle())
                 .onTapGesture { selection = item }
             }
@@ -150,7 +155,7 @@ struct MainDashboardView: View {
     private var filteredItems: [DocumentItem] {
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return store.items.filter { item in
-            // Statusfilter (einfache Logik: hat Korrespondent = analysiert)
+            // Statusfilter
             let isAnalyzed = !item.correspondent.isEmpty
             switch statusFilter {
             case .all:      break
@@ -175,8 +180,9 @@ struct MainDashboardView: View {
             if let sel = selection {
                 PDFKitNSView(url: sel.fileURL)
                     .background(Color(nsColor: .underPageBackgroundColor))
+                    .id(sel.id) // Erzwingt Neuladen bei Wechsel
             } else {
-                placeholder("Kein Dokument ausgewählt", sub: "Wähle links ein PDF, um die Vorschau anzuzeigen.")
+                placeholder("Kein Dokument", sub: "Alles erledigt! 🎉")
             }
         }
     }
@@ -186,7 +192,6 @@ struct MainDashboardView: View {
     private var metadataPanel: some View {
         Group {
             if let sel = selection {
-                // KORREKTUR: Aufruf an die neue API angepasst
                 MetadataEditorView(item: sel)
                     .id(sel.id) // Neu rendern bei Wechsel
             } else {
@@ -197,9 +202,47 @@ struct MainDashboardView: View {
 
     // MARK: Helpers
 
-    private func autoSelectFirstIfNeeded() {
-        if selection == nil, let first = store.items.first {
-            selection = first
+    private func handleItemsChange(oldItems: [DocumentItem], newItems: [DocumentItem]) {
+        // Fall 1: Liste ist leer geworden -> Selection löschen
+        if newItems.isEmpty {
+            selection = nil
+            return
+        }
+
+        // Fall 2: Wir haben eine Selection, prüfen ob sie noch gültig ist
+        if let currentSel = selection {
+            // Ist das selektierte Item noch in der neuen Liste?
+            if newItems.contains(where: { $0.id == currentSel.id }) {
+                // Ja, alles gut. (Ggf. Metadaten-Update, aber Selection bleibt)
+                // Wir updaten `selection` mit dem neuesten Objekt aus `newItems` (wichtig für Metadaten-Refresh)
+                if let updatedItem = newItems.first(where: { $0.id == currentSel.id }) {
+                    selection = updatedItem
+                }
+                return
+            } else {
+                // Nein, es wurde gelöscht/archiviert!
+                // Wir müssen das NÄCHSTE Item finden.
+                
+                // Wir suchen den Index des alten Items in der ALTEN Liste
+                if let oldIndex = oldItems.firstIndex(where: { $0.id == currentSel.id }) {
+                    // Wir versuchen, den gleichen Index in der NEUEN Liste zu nehmen
+                    // Da das Item weg ist, rutschen alle nach -> gleicher Index ist das "nächste" Element
+                    if oldIndex < newItems.count {
+                        selection = newItems[oldIndex]
+                    } else if !newItems.isEmpty {
+                        // Wenn wir das letzte Element gelöscht haben, nehmen wir das nun letzte Element
+                        selection = newItems.last
+                    } else {
+                        selection = nil
+                    }
+                } else {
+                    // Fallback: Einfach das erste nehmen
+                    selection = newItems.first
+                }
+            }
+        } else {
+            // Fall 3: Keine Selection, aber Items vorhanden -> Erstes wählen
+            selection = newItems.first
         }
     }
 
@@ -216,7 +259,6 @@ struct MainDashboardView: View {
 
 // MARK: - Helper Views
 
-// Fehlende PDFKitNSView nachgereicht
 struct PDFKitNSView: NSViewRepresentable {
     let url: URL
 
@@ -235,7 +277,6 @@ struct PDFKitNSView: NSViewRepresentable {
     }
 }
 
-// Typ-Badge
 private struct TypeBadge: View {
     let type: String
     init(_ t: String) { self.type = t }
