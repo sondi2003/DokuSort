@@ -67,7 +67,7 @@ struct MetadataEditorView: View {
                     text: $korrespondent,
                     suggestions: catalog.correspondents
                 )
-                .zIndex(2) // Wichtig für Overlay-Hierarchie
+                .zIndex(2)
                 
                 // AutoComplete für Tags/Typ
                 AutoCompleteTextField(
@@ -135,6 +135,14 @@ struct MetadataEditorView: View {
     private func saveChanges(archive: Bool) {
         let tagArray = tags.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         
+        // FIX: Sofortiges Lernen von neuen Eingaben
+        if !korrespondent.isEmpty {
+            catalog.addCorrespondent(korrespondent)
+        }
+        if !tagArray.isEmpty {
+            catalog.addTags(tagArray)
+        }
+        
         let updatedItem = DocumentItem(
             id: item.id, fileName: item.fileName, fileURL: item.fileURL, fileSize: item.fileSize, addedAt: item.addedAt,
             date: datum, correspondent: korrespondent, tags: tagArray, extractedText: extractedText
@@ -145,6 +153,7 @@ struct MetadataEditorView: View {
             performArchiving(item: updatedItem)
         } else {
             store.update(updatedItem)
+            statusMessage = "Gespeichert und gelernt."
         }
     }
     
@@ -173,14 +182,14 @@ struct MetadataEditorView: View {
         statusMessage = forceOCR ? "Tiefen-Scan..." : "Analysiere..."
         
         let knownCorps = catalog.correspondents
-        let knownTags = catalog.tags // NEU: Hole bekannte Tags aus Store
+        let knownTags = catalog.tags
         
         let config = AnalysisConfig(
             ollamaBaseURL: settings.ollamaBaseURL,
             ollamaModel: settings.ollamaModel,
             ollamaPrompt: settings.ollamaPrompt,
             knownCorrespondents: knownCorps,
-            knownTags: knownTags // NEU: Übergabe
+            knownTags: knownTags
         )
         
         do {
@@ -194,6 +203,7 @@ struct MetadataEditorView: View {
                 self.statusMessage = "Fertig (\(result.source))"
                 self.isAnalyzing = false
                 
+                // Autosave nach Analyse (nur Dokument, Katalog lernt erst bei Bestätigung)
                 let autoSavedItem = DocumentItem(
                     id: item.id, fileName: item.fileName, fileURL: item.fileURL, fileSize: item.fileSize, addedAt: item.addedAt,
                     date: self.datum, correspondent: self.korrespondent, tags: self.tags.split(separator: ",").map{String($0)}, extractedText: self.extractedText
