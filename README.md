@@ -40,7 +40,6 @@ Niemand sortiert gerne Rechnungen. Cloud-Lösungen sind oft teuer oder datenschu
 
 ## 📸 Screenshots
 
-*(Hier bitte einen Screenshot der App einfügen, z.B. das Dashboard mit Split-View)*
 
 ![DokuSort Dashboard Screenshot](./Screenshots/dashboard_preview.png)
 > *Das Dashboard: Links die Dokumentenliste, rechts die KI-Vorschläge und Metadaten.*
@@ -133,7 +132,6 @@ Nobody likes sorting invoices. Cloud solutions are often expensive or raise priv
 
 ## 📸 Screenshots
 
-*(Place a screenshot here)*
 
 ![DokuSort Dashboard Screenshot](./Screenshots/dashboard_preview.png)
 > *The Dashboard: Document list on the left, AI suggestions and metadata on the right.*
