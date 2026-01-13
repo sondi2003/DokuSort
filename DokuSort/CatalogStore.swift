@@ -22,12 +22,41 @@ final class CatalogStore: ObservableObject {
         load()
     }
     
+    // MARK: - Matching Logic (NEU)
+    
+    /// Versucht, einen bestehenden Eintrag zu finden, der dem Kandidaten entspricht.
+    /// Nutzt den CorrespondentNormalizer, um Suffixe (AG, GmbH) zu ignorieren.
+    /// Beispiel: Input "UBS AG" findet "UBS", wenn "UBS" bereits existiert.
+    func findBestMatch(for candidate: String) -> String? {
+        let trimmedCandidate = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedCandidate.isEmpty { return nil }
+        
+        // 1. Exakter Match (Case Insensitive)
+        if let exact = correspondents.first(where: { $0.localizedCaseInsensitiveCompare(trimmedCandidate) == .orderedSame }) {
+            return exact
+        }
+        
+        // 2. Normalisierter Match (nutzt deine CorrespondentNormalizer Logik)
+        // Wir suchen nach einem Eintrag, dessen "normalizedKey" identisch ist.
+        // Der Normalizer entfernt "AG", "GmbH" etc. -> "UBS AG" wird zu "ubs", "UBS" wird zu "ubs".
+        let candidateKey = CorrespondentNormalizer.normalizedKey(for: trimmedCandidate)
+        
+        if let normalizedMatch = correspondents.first(where: {
+            CorrespondentNormalizer.normalizedKey(for: $0) == candidateKey
+        }) {
+            return normalizedMatch
+        }
+        
+        return nil
+    }
+    
     // MARK: - Correspondents
     
     func addCorrespondent(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         
+        // Prüfen, ob exakt dieser Name schon existiert (Case Insensitive)
         if !correspondents.contains(where: { $0.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) {
             correspondents.append(trimmed)
             correspondents.sort()
@@ -35,13 +64,13 @@ final class CatalogStore: ObservableObject {
         }
     }
     
-    func deleteCorrespondent(at index: Int) { // Fehlte vorher
+    func deleteCorrespondent(at index: Int) {
         guard correspondents.indices.contains(index) else { return }
         correspondents.remove(at: index)
         save()
     }
     
-    func deleteCorrespondent(_ name: String) { // Optional: Löschen nach Name
+    func deleteCorrespondent(_ name: String) {
         if let index = correspondents.firstIndex(of: name) {
             correspondents.remove(at: index)
             save()
@@ -72,7 +101,7 @@ final class CatalogStore: ObservableObject {
         addTags([name])
     }
     
-    func deleteTag(at index: Int) { // Fehlte vorher
+    func deleteTag(at index: Int) {
         guard tags.indices.contains(index) else { return }
         tags.remove(at: index)
         save()

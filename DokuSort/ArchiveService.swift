@@ -29,13 +29,15 @@ final class ArchiveService {
         formatter.dateFormat = "yyyy-MM-dd"
         let dateStr = formatter.string(from: item.date)
         
-        let safeKorr = sanitize(item.correspondent.isEmpty ? "Unbekannt" : item.correspondent)
-        let safeType = sanitize(item.tags.first ?? "Dokument")
+        // Für Dateinamen wollen wir vielleicht weiterhin Unterstriche statt Leerzeichen,
+        // um Probleme mit alten Dateisystemen/Scripts zu vermeiden.
+        // Falls du auch im Dateinamen Leerzeichen willst, setze replaceSpaces auf false.
+        let safeKorr = sanitize(item.correspondent.isEmpty ? "Unbekannt" : item.correspondent, replaceSpaces: true)
+        let safeType = sanitize(item.tags.first ?? "Dokument", replaceSpaces: true)
         
         return "\(dateStr)_\(safeKorr)_\(safeType).pdf"
     }
     
-    // WICHTIG: Das muss nun auf dem MainActor laufen, um den CatalogStore zu updaten
     @MainActor
     static func archive(
         item: DocumentItem,
@@ -45,13 +47,26 @@ final class ArchiveService {
         // 1. Validierung
         guard !item.correspondent.isEmpty else { throw ArchiveError.missingMetadata }
         
-        // 2. LERNEN: Wir füttern das Gehirn
-        CatalogStore.shared.addCorrespondent(item.correspondent)
+        // 2. INTELLIGENTES MATCHING & LERNEN
+        // Prüfen, ob wir diesen Korrespondenten schon kennen (ignoriere AG/GmbH Suffixe)
+        // Wenn item.correspondent = "UBS AG", aber "UBS" im Katalog ist -> nutze "UBS"
+        let bestMatch = CatalogStore.shared.findBestMatch(for: item.correspondent)
+        
+        // Wenn wir einen Match gefunden haben, nutzen wir diesen für den Ordnernamen.
+        // Wenn nicht, nutzen wir den neu erkannten Namen.
+        let targetCorrespondentName = bestMatch ?? item.correspondent
+        
+        // Den ursprünglich erkannten Namen trotzdem zum Katalog hinzufügen, falls er neu ist
+        // (oder sollen wir nur den targetName speichern? Meist ist es besser, Variationen zu kennen
+        // aber auf einen Hauptordner zu mappen. Für jetzt speichern wir den Input).
+        CatalogStore.shared.addCorrespondent(targetCorrespondentName)
         CatalogStore.shared.addTags(item.tags)
         
         // 3. Ordnerstruktur erstellen
-        let safeCorrespondent = sanitize(item.correspondent)
-        var targetDir = destinationFolder.appendingPathComponent(safeCorrespondent, isDirectory: true)
+        // Hier: replaceSpaces: false -> Erlaubt "UBS AG" statt "UBS_AG"
+        let safeFolderString = sanitize(targetCorrespondentName, replaceSpaces: false)
+        
+        var targetDir = destinationFolder.appendingPathComponent(safeFolderString, isDirectory: true)
         try createDir(targetDir)
         
         if organizeByYear {
@@ -61,6 +76,10 @@ final class ArchiveService {
         }
         
         // 4. Zielnamen generieren
+        // Hinweis: Der Dateiname wird basierend auf den Item-Daten generiert.
+        // Wenn du willst, dass auch im Dateinamen der "saubere" Name (z.B. UBS statt UBS AG) steht,
+        // müsstest du das item temporär kopieren/anpassen.
+        // Aktuell bleibt der Dateiname wie erkannt, nur der Ordner wird "gemerged".
         let newFilename = generateFilename(for: item)
         var destinationURL = targetDir.appendingPathComponent(newFilename)
         
@@ -88,12 +107,18 @@ final class ArchiveService {
         }
     }
     
-    private static func sanitize(_ text: String) -> String {
+    // NEU: Parameter replaceSpaces steuert die Unterstriche
+    private static func sanitize(_ text: String, replaceSpaces: Bool) -> String {
         let invalidCharacters = CharacterSet(charactersIn: ":/\\?%*|\"<>")
-        return text
+        var result = text
             .components(separatedBy: invalidCharacters)
             .joined(separator: "")
-            .replacingOccurrences(of: " ", with: "_")
             .trimmingCharacters(in: .whitespaces)
+        
+        if replaceSpaces {
+            result = result.replacingOccurrences(of: " ", with: "_")
+        }
+        
+        return result
     }
 }

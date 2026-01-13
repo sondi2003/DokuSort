@@ -13,8 +13,9 @@ struct AnalysisConfig {
     let ollamaBaseURL: String
     let ollamaModel: String
     let ollamaPrompt: String
-    // NEU: Bekannte Entitäten für Context Injection
+    // Context Injection
     let knownCorrespondents: [String]
+    let knownTags: [String] // NEU
 }
 
 actor DocumentAnalysisService {
@@ -39,19 +40,31 @@ actor DocumentAnalysisService {
         
         // 2. Prompt anreichern (Context Injection)
         var enrichedPrompt = config.ollamaPrompt
+        
+        // Bauen eines Kontext-Hinweises
+        var contextHint = ""
+        
         if !config.knownCorrespondents.isEmpty {
-            let list = config.knownCorrespondents.prefix(50).joined(separator: ", ") // Limitieren, um Token zu sparen
-            let contextHint = """
-            
-            HINWEIS: Hier ist eine Liste bekannter Korrespondenten (wähle einen davon, falls passend, sonst nimm den aus dem Text):
+            let list = config.knownCorrespondents.prefix(50).joined(separator: ", ")
+            contextHint += """
+            HINWEIS KORRESPONDENTEN: Hier ist eine Liste bekannter Absender (wähle einen davon, falls passend):
             [\(list)]
             
             """
+        }
+        
+        if !config.knownTags.isEmpty {
+            let list = config.knownTags.prefix(50).joined(separator: ", ")
+            contextHint += """
+            HINWEIS DOKUMENTTYPEN: Hier ist eine Liste bekannter Typen/Tags (wähle einen davon, falls er im Text vorkommt):
+            [\(list)]
+            
+            """
+        }
+        
+        if !contextHint.isEmpty {
             // Wir fügen den Hinweis VOR dem Platzhalter {TEXT} ein
             enrichedPrompt = enrichedPrompt.replacingOccurrences(of: "{TEXT}", with: "\(contextHint)\n{TEXT}")
-        } else {
-             // Standard Ersetzung falls Liste leer
-             enrichedPrompt = enrichedPrompt.replacingOccurrences(of: "{TEXT}", with: "{TEXT}")
         }
         
         // 3. Priorität 1: Apple Intelligence
@@ -83,8 +96,8 @@ actor DocumentAnalysisService {
             }
         }
         
-        // 5. Priorität 3: Heuristik
-        let fallbackSuggestion = OCRService.suggest(fromText: text)
+        // 5. Priorität 3: Heuristik (Mit bekannten Tags!)
+        let fallbackSuggestion = OCRService.suggest(fromText: text, knownTags: config.knownTags)
         return AnalysisResult(text: text, suggestion: fallbackSuggestion, source: "Regelbasiert")
     }
     

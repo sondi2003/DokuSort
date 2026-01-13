@@ -13,7 +13,7 @@ struct MetadataEditorView: View {
     
     @EnvironmentObject var store: DocumentStore
     @EnvironmentObject var settings: SettingsStore
-    // NEU: Zugriff auf den Katalog für Vorschläge
+    // Zugriff auf den Katalog für Vorschläge
     @EnvironmentObject var catalog: CatalogStore
     
     @State private var datum: Date = Date()
@@ -61,7 +61,7 @@ struct MetadataEditorView: View {
             Section(header: Text("Metadaten")) {
                 DatePicker("Datum", selection: $datum, displayedComponents: .date)
                 
-                // NEU: AutoComplete statt normalem TextField
+                // AutoComplete für Korrespondent
                 AutoCompleteTextField(
                     title: "Korrespondent",
                     text: $korrespondent,
@@ -69,7 +69,7 @@ struct MetadataEditorView: View {
                 )
                 .zIndex(2) // Wichtig für Overlay-Hierarchie
                 
-                // NEU: AutoComplete für Tags/Typ
+                // AutoComplete für Tags/Typ
                 AutoCompleteTextField(
                     title: "Tags / Typ",
                     text: $tags,
@@ -172,13 +172,15 @@ struct MetadataEditorView: View {
         isAnalyzing = true
         statusMessage = forceOCR ? "Tiefen-Scan..." : "Analysiere..."
         
-        let knownCorps = catalog.correspondents // Jetzt direkt aus dem Environment
+        let knownCorps = catalog.correspondents
+        let knownTags = catalog.tags // NEU: Hole bekannte Tags aus Store
         
         let config = AnalysisConfig(
             ollamaBaseURL: settings.ollamaBaseURL,
             ollamaModel: settings.ollamaModel,
             ollamaPrompt: settings.ollamaPrompt,
-            knownCorrespondents: knownCorps
+            knownCorrespondents: knownCorps,
+            knownTags: knownTags // NEU: Übergabe
         )
         
         do {

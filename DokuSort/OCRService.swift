@@ -20,17 +20,17 @@ final class OCRService {
     
     // MARK: - Public API
     
-    static func suggest(from pdfURL: URL) async throws -> Suggestion {
+    static func suggest(from pdfURL: URL, knownTags: [String] = []) async throws -> Suggestion {
         let text = try await recognizeFullText(pdfURL: pdfURL)
-        return suggest(fromText: text)
+        return suggest(fromText: text, knownTags: knownTags)
     }
     
-    // NEU: 'nonisolated', da reine Logik
-    nonisolated static func suggest(fromText text: String) -> Suggestion {
+    // NEU: Parameter knownTags
+    nonisolated static func suggest(fromText text: String, knownTags: [String] = []) -> Suggestion {
         var sug = Suggestion()
         if let d = extractDate(from: text) { sug.datum = d }
         if let k = extractKorrespondent(from: text) { sug.korrespondent = k }
-        sug.dokumenttyp = extractDokumenttyp(from: text)
+        sug.dokumenttyp = extractDokumenttyp(from: text, knownTags: knownTags)
         return sug
     }
 
@@ -68,7 +68,7 @@ final class OCRService {
         return text
     }
 
-    // MARK: - Heuristiken (Private, nonisolated da von nonisolated suggest aufgerufen)
+    // MARK: - Heuristiken
     
     private static func extractDate(from text: String) -> Date? {
         let patterns = [
@@ -177,8 +177,21 @@ final class OCRService {
         return false
     }
 
-    private static func extractDokumenttyp(from text: String) -> String {
+    // NEU: Prüft zuerst die bekannten Tags
+    private static func extractDokumenttyp(from text: String, knownTags: [String]) -> String {
         let lower = text.lowercased()
+        
+        // 1. Priorität: Bekannte Tags aus dem Katalog
+        // Wir sortieren nach Länge (absteigend), damit spezifischere Begriffe vor allgemeinen matchen
+        // (z.B. "Spezielle Rechnung" vor "Rechnung")
+        let sortedTags = knownTags.sorted { $0.count > $1.count }
+        for tag in sortedTags {
+            if lower.contains(tag.lowercased()) {
+                return tag
+            }
+        }
+        
+        // 2. Fallback: Hardcoded Keywords
         if lower.contains("rechnung") || lower.contains("invoice") { return "Rechnung" }
         if lower.contains("mahnung") { return "Mahnung" }
         if lower.contains("gutschrift") || lower.contains("credit") { return "Gutschrift" }
@@ -186,6 +199,7 @@ final class OCRService {
         if lower.contains("police") || lower.contains("versicherungsschein") { return "Police" }
         if lower.contains("vertrag") { return "Vertrag" }
         if lower.contains("lieferschein") || lower.contains("delivery") { return "Lieferschein" }
+        
         return "Dokument"
     }
 }
