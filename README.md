@@ -1,165 +1,182 @@
-# DokuSort
+# DokuSort 📂✨
 
-**Version:** 1.0.3
-**Plattform:** macOS
-**Autor:** Richard Sonderegger
+> **Intelligente, lokale Dokumentenverwaltung für macOS.**
+> *Powered by Ollama & Apple Vision Framework.*
 
-## Übersicht
+![Status](https://img.shields.io/badge/Status-Work_in_Progress-orange)
+![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey)
+![Stack](https://img.shields.io/badge/Built_with-SwiftUI-blue)
 
-DokuSort ist eine intelligente macOS-Anwendung zur automatischen Verwaltung und Archivierung von PDF-Dokumenten. Die App analysiert PDF-Dateien mit künstlicher Intelligenz, extrahiert wichtige Metadaten und organisiert Dokumente automatisch in einer strukturierten Ordnerhierarchie.
+## Über DokuSort
 
-## Hauptfunktionen
+DokuSort ist eine native macOS-Anwendung, die dein PDF-Chaos bändigt, ohne dass deine Daten deinen Mac verlassen. Die App überwacht einen Eingangsordner, analysiert Dokumente mittels lokaler KI (Ollama & Vision OCR) auf Absender, Datum und Typ und sortiert sie vollautomatisch in eine saubere Archivstruktur ein.
 
-### Automatische Dokumentenanalyse
-- Kontinuierliche Überwachung eines Quellordners auf neue PDF-Dateien
-- KI-gestützte Extraktion von Metadaten aus Dokumenten
-- Automatische Texterkennung (OCR) mittels macOS Vision Framework
-- Intelligente Analyse durch Ollama-Integration für präzise Ergebnisse
-
-### Intelligente Metadaten-Extraktion
-DokuSort extrahiert automatisch folgende Informationen:
-- **Dokumentdatum**: Das Hauptdatum des Dokuments (nicht Ablauf- oder Lieferdaten)
-- **Korrespondent**: Name der ausstellenden Organisation oder Person
-- **Dokumenttyp**: Kategorisierung (Rechnung, Offerte, Vertrag, Police, etc.)
-
-### Automatische Organisation
-- Strukturierte Ablage nach dem Schema: `Archiv/[Korrespondent]/[Jahr]/[Datum-Typ].pdf`
-- Intelligente Normalisierung und Deduplizierung von Korrespondentennamen
-- Alias-Mapping für unterschiedliche Schreibweisen von Firmennamen
-- Automatische Erstellung der Ordnerstruktur
-
-### Flexibles Datei-Management
-- Wahlweise Verschieben oder Kopieren von Dokumenten
-- Drei Konfliktlösungsstrategien bei Duplikaten:
-  - Benutzer fragen (Standard)
-  - Automatische Suffix-Vergabe
-  - Überschreiben bestehender Dateien
-- Optionale Löschung der Quelldateien nach erfolgreicher Archivierung
-
-### Benutzerfreundliche Oberfläche
-- **Dashboard** mit drei Bereichen:
-  - Dokumentenliste mit Such- und Filterfunktion
-  - PDF-Vorschau mit kontinuierlichem Scrollen
-  - Metadaten-Editor zur manuellen Bearbeitung
-- Echtzeit-Fortschrittsanzeige während der Analyse
-- Statusfilter für Dokumente (Alle, Ausstehend, Analysiert)
-
-### Metadaten-Verwaltung
-- Manuelle Bearbeitung und Korrektur extrahierter Daten
-- Autocomplete-Vorschläge für Korrespondenten und Dokumenttypen
-- Persistente Kataloge bekannter Korrespondenten und Dokumenttypen
-- Validierung vor der Archivierung
-
-## Ollama-Integration
-
-DokuSort nutzt **Ollama** für die KI-gestützte Dokumentenanalyse. Ollama ermöglicht den Einsatz lokaler Large Language Models (LLMs) direkt auf Ihrem Mac.
-
-### Vorteile der Ollama-Integration
-- Vollständig lokale Verarbeitung ohne Cloud-Anbindung
-- Datenschutzfreundlich: Dokumente verlassen nie Ihren Computer
-- Mehrsprachige Unterstützung (Deutsch, Englisch)
-- Hohe Analysegenauigkeit durch Few-Shot Learning
-- Strukturierte JSON-Antworten für zuverlässige Extraktion
-
-### Standardkonfiguration
-- **Standard-Modell:** llama3.1
-- **Verbindung:** HTTP (Standard: `http://127.0.0.1:11434`)
-- Modell und URL können in den Einstellungen angepasst werden
-
-### Analyseprozess
-1. Textextraktion aus PDF mittels OCR
-2. Parallele Analyse durch Ollama AI und heuristische Methoden
-3. Bewertung der Ergebnisse mit Konfidenzwerten
-4. Auswahl des besten Analyseergebnisses
-
-## Workflow
-
-1. **Überwachung**: DokuSort überwacht kontinuierlich den konfigurierten Quellordner
-2. **Erkennung**: Neue PDF-Dateien werden automatisch erkannt
-3. **Analyse**: Dokumente werden im Hintergrund analysiert und Metadaten extrahiert
-4. **Überprüfung**: Benutzer kann die vorgeschlagenen Metadaten im Editor überprüfen und anpassen
-5. **Archivierung**: Nach Bestätigung wird das Dokument in die strukturierte Ordnerhierarchie abgelegt
-6. **Bereinigung**: Optional werden Quelldateien nach erfolgreicher Archivierung entfernt
-
-## Einrichtung
-
-### Voraussetzungen
-- macOS (aktuelle Version empfohlen)
-- Ollama installiert und konfiguriert
-- Ausreichend Speicherplatz für das Dokumentarchiv
-
-### Erste Schritte
-1. DokuSort starten
-2. In den Einstellungen Quellordner und Archiv-Basisordner festlegen
-3. Ollama-Verbindung und Modell konfigurieren
-4. Ablage-Verhalten wählen (Verschieben/Kopieren)
-5. PDF-Dateien in den Quellordner legen
-
-## Einstellungen
-
-### Ordnerkonfiguration
-- **Quellordner**: Ordner, der auf neue PDF-Dateien überwacht wird
-- **Archiv-Basisordner**: Zielordner für die strukturierte Ablage
-
-### Ablage-Verhalten
-- **Dateioperation**: Verschieben oder Kopieren
-- **Quelldateien löschen**: Optional nach erfolgreicher Kopie
-- **Konfliktbehandlung**: Strategie bei bereits existierenden Dateien
-
-### Ollama-Konfiguration
-- **Basis-URL**: Adresse des Ollama-Servers
-- **Modell**: Verwendetes LLM-Modell
-
-## Unterstützte Dokumenttypen
-
-DokuSort erkennt und kategorisiert folgende Dokumenttypen:
-- Rechnung
-- Mahnung
-- Gutschrift
-- Offerte
-- Police (Versicherung)
-- Vertrag
-- Lieferschein
-- Dokument (Allgemein)
-
-## Dateiformat
-
-- **Unterstützt**: PDF (.pdf)
-- **Verarbeitung**: Erste 1-2 Seiten für OCR (Performance-Optimierung)
-- **Validierung**: Automatische Überprüfung vor der Verarbeitung
-
-## Katalog-Management
-
-DokuSort pflegt automatisch Listen bekannter Korrespondenten und Dokumenttypen:
-- Intelligente Namens-Normalisierung
-- Alias-Verwaltung für verschiedene Schreibweisen
-- Fuzzy-Matching zur Gruppierung ähnlicher Namen
-- Autocomplete-Vorschläge beim manuellen Editieren
-
-## Technische Merkmale
-
-- Native macOS-App mit SwiftUI
-- Asynchrone Hintergrundanalyse mit Warteschlangen-System
-- Persistente Caching-Mechanismen für Analyseergebnisse
-- Datei-System-Überwachung mittels FSEvents
-- Security Bookmarks für sichere Ordnerzugriffe
-- JSON-basierte Persistierung von Daten und Einstellungen
-
-## Datenschutz
-
-- Alle Analysen erfolgen lokal auf Ihrem Mac
-- Keine Übertragung von Dokumenten an externe Server
-- Keine Cloud-Anbindung erforderlich
-- Vollständige Kontrolle über Ihre Daten
-
-## Support und Feedback
-
-Bei Fragen, Problemen oder Verbesserungsvorschlägen öffnen Sie bitte ein Issue auf GitHub.
-
-## Lizenz
-
-Siehe LICENSE-Datei für Details.
+**Warum DokuSort?**
+Niemand sortiert gerne Rechnungen. Cloud-Lösungen sind oft teuer oder datenschutzrechtlich bedenklich. DokuSort kombiniert die Power von LLMs mit der Privatsphäre einer lokalen App.
 
 ---
 
-**DokuSort** – Intelligente Dokumentenverwaltung für macOS
+## 📑 Inhaltsverzeichnis
+
+- [Features](#-features)
+- [Screenshots](#-screenshots)
+- [Für wen ist das?](#-für-wen-ist-das)
+- [Tech Stack](#-tech-stack)
+- [Voraussetzungen](#-voraussetzungen)
+- [Mitwirken (Contributing)](#-mitwirken)
+- [Lizenz](#-lizenz)
+
+---
+
+## 🚀 Features
+
+* **🔒 Privacy First:** Keine Cloud. Die Analyse läuft lokal über Ollama (z.B. Llama 3) und Apples Vision Framework.
+* **🧠 Smart Learning:** Die App merkt sich deine Korrespondenten. Dank Fuzzy-Matching (Levenshtein-Distanz) versteht sie, dass "Apple Distribution" und "Apple Inc." zusammengehören.
+* **⚡️ Automatischer Workflow:**
+    * Überwachung des "Scan"-Ordners.
+    * Extraktion von Metadaten (Datum, Absender, Dokumenttyp).
+    * Verschieben in Ordnerstruktur: `Archiv / [Jahr] / [Korrespondent] / [Datum]_[Typ].pdf`.
+* **✍️ Volle Kontrolle:** Ein natives Dashboard erlaubt dir, Vorschläge zu korrigieren, bevor archiviert wird.
+
+## 📸 Screenshots
+
+*(Hier bitte einen Screenshot der App einfügen, z.B. das Dashboard mit Split-View)*
+
+![DokuSort Dashboard Screenshot](./Screenshots/dashboard_preview.png)
+> *Das Dashboard: Links die Dokumentenliste, rechts die KI-Vorschläge und Metadaten.*
+
+## 🎯 Für wen ist das?
+
+* **Entwickler & Techies**, die ihre Dokumentenablage automatisieren wollen, aber volle Kontrolle über den Code und die Modelle haben möchten.
+* **Privacy-Enthusiasten**, die keine sensiblen Rechnungen an Cloud-APIs senden wollen.
+* **Mac-User**, die eine native, schnelle Oberfläche (SwiftUI) bevorzugen.
+
+## 🛠 Tech Stack
+
+* **Sprache:** Swift 5.9+
+* **UI Framework:** SwiftUI (macOS)
+* **KI & Analyse:**
+    * [Ollama](https://ollama.com/) (Lokale LLM Inference)
+    * Apple Vision Framework (OCR)
+    * `PDFKit` (Rendering & Metadaten)
+* **Architektur:** MVVM, Swift Concurrency (`async/await`), Combine.
+* **Datenhaltung:** JSON-Persistenz & FileSystem Monitoring (`DispatchSource`).
+
+## ⚙️ Voraussetzungen
+
+1.  **macOS 14.0+** (Sonoma oder neuer empfohlen).
+2.  **Ollama** muss installiert sein und im Hintergrund laufen.
+    * Download: [ollama.com](https://ollama.com)
+    * Standard-Modell: `llama3.1` (in den App-Einstellungen änderbar).
+
+## 🤝 Mitwirken
+
+**Dieses Projekt steht noch am Anfang (Early Access / WIP)!**
+
+Ich freue mich riesig über Feedback, Pull Requests oder Bug Reports.
+Es gibt noch viel zu tun:
+* Verbesserung der Prompt-Engineering Strategien.
+* Erweiterung der unterstützten Dokumenttypen.
+* UI-Polishing.
+
+Fühl dich frei, das Repository zu forken und deine Ideen einzubringen!
+
+## 📄 Lizenz
+
+Siehe [LICENSE](LICENSE) Datei.
+
+---
+**Author:** Richard Sonderegger
+
+
+--------------------------------------------------------------------------------------------------
+
+# DokuSort 📂✨
+
+> **Intelligent, local document management for macOS.**
+> *Powered by Ollama & Apple Vision Framework.*
+
+![Status](https://img.shields.io/badge/Status-Work_in_Progress-orange)
+![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey)
+![Stack](https://img.shields.io/badge/Built_with-SwiftUI-blue)
+
+## About DokuSort
+
+DokuSort is a native macOS application designed to tame your PDF chaos without your data ever leaving your machine. The app monitors an input folder, analyzes documents using local AI (Ollama & Vision OCR) to extract sender, date, and type, and automatically sorts them into a clean archive structure.
+
+**Why DokuSort?**
+Nobody likes sorting invoices. Cloud solutions are often expensive or raise privacy concerns. DokuSort combines the power of LLMs with the privacy of a local app.
+
+---
+
+## 📑 Table of Contents
+
+- [Features](#-features)
+- [Screenshots](#-screenshots)
+- [Who is this for?](#-who-is-this-for)
+- [Tech Stack](#-tech-stack)
+- [Prerequisites](#-prerequisites)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+---
+
+## 🚀 Features
+
+* **🔒 Privacy First:** No Cloud. Analysis runs locally via Ollama (e.g., Llama 3) and Apple's Vision Framework.
+* **🧠 Smart Learning:** The app remembers your correspondents. Thanks to fuzzy matching logic, it understands that "Apple Distribution" and "Apple Inc." belong to the same entity.
+* **⚡️ Automated Workflow:**
+    * Monitors your "Scan" folder.
+    * Extracts metadata (Date, Sender, Document Type).
+    * Moves files into a structured archive: `Archive / [Year] / [Correspondent] / [Date]_[Type].pdf`.
+* **✍️ Full Control:** A native dashboard allows you to review and correct AI suggestions before archiving.
+
+## 📸 Screenshots
+
+*(Place a screenshot here)*
+
+![DokuSort Dashboard Screenshot](./Screenshots/dashboard_preview.png)
+> *The Dashboard: Document list on the left, AI suggestions and metadata on the right.*
+
+## 🎯 Who is this for?
+
+* **Developers & Techies** who want to automate their filing system while maintaining full control over code and models.
+* **Privacy Enthusiasts** who don't want to send sensitive invoices to cloud APIs.
+* **Mac Users** who prefer a native, performant interface (SwiftUI).
+
+## 🛠 Tech Stack
+
+* **Language:** Swift 5.9+
+* **UI Framework:** SwiftUI (macOS)
+* **AI & Analysis:**
+    * [Ollama](https://ollama.com/) (Local LLM Inference)
+    * Apple Vision Framework (OCR)
+    * `PDFKit` (Rendering & Metadata)
+* **Architecture:** MVVM, Swift Concurrency (`async/await`), Combine.
+* **Persistence:** JSON persistence & FileSystem Monitoring (`DispatchSource`).
+
+## ⚙️ Prerequisites
+
+1.  **macOS 14.0+** (Sonoma or newer recommended).
+2.  **Ollama** must be installed and running in the background.
+    * Download: [ollama.com](https://ollama.com)
+    * Default Model: `llama3.1` (configurable in App Settings).
+
+## 🤝 Contributing
+
+**This project is currently in Early Access / Work in Progress!**
+
+Contributions are highly welcome. Whether it's a bug report, a feature request, or a pull request – I'd love to see what you can add.
+Areas for improvement:
+* Refining Prompt Engineering strategies.
+* Expanding supported document types.
+* UI Polishing.
+
+Feel free to fork the repository and submit your PRs!
+
+## 📄 License
+
+See [LICENSE](LICENSE) file for details.
+
+---
+**Author:** Richard Sonderegger
